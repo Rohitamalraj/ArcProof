@@ -23,8 +23,9 @@ Requester --submits job+budget--> Orchestrator :8000 (real x402 payments)
                     +-------------------+-------------------+
                                         v
                               Evaluator :8004
-                    (re-derives every claim from an independent
-                     live source, rule-based match/mismatch/unverifiable)
+                    (real LLM tool-calling agent -- re-derives every
+                     claim from an independent live source and judges
+                     match/mismatch/unverifiable itself)
                                         v
                          Settlement (settlement/escrow.py)
               real Arc testnet transfers, per-specialist accuracy,
@@ -66,9 +67,9 @@ like.
 | `compliance_flag` | Real OFAC-designated addresses (Tornado Cash, 2022-08-08), static local snapshot rather than a live per-request pull of the full SDN list -- see `fixtures/sanctioned_addresses.json` for provenance and the swap-to-live-feed note |
 | `wallet_flow` | **Live** via Etherscan if `ETHERSCAN_API_KEY` is set; deterministic simulated fallback (explicitly flagged `simulated: true`) otherwise |
 | `token_concentration` | Simulated (flagged `simulated: true`) -- real holder-distribution data needs Etherscan's paid tier |
-| **x402 payments** | **Real** -- every specialist call is a real 402 response, a real signed Arc testnet transaction, and a real on-chain verification before the resource is served |
-| **Settlement** | **Real** -- escrow lock, per-specialist payout, and withheld amounts are real Arc testnet transfers (payments/chain.py) |
-| **Orchestrator planning** | **Real LLM decision** via LangChain (`langchain.agents.create_agent`) when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set; falls back to the fixed PRD Template A/B specialist list otherwise (see `agents/orchestrator.py`) |
+| **x402 payments** | **Real** -- 402 response and payment-proof payload use the real installed `x402` package's wire schema (`x402.schemas.payments`); settlement is a real signed Arc testnet transaction independently re-verified on-chain before the resource is served (see `payments/x402.py` docstring for why the package's EIP-3009 "exact" scheme isn't used) |
+| **Settlement / escrow** | **Real smart contract** -- `contracts/VeriFiEscrow.sol`, deployed on Arc testnet. Lock/release/finalize/refund are real contract calls (`payments/escrow_contract.py`), not application-level wallet transfers -- the contract itself holds locked job budgets and enforces who can release/refund (only the orchestrator's wallet, set as `settler` at deploy time) |
+| **Every agent** | **Real LLM tool-calling agent** (`langchain.agents.create_agent`) -- orchestrator (planning + memo), all 3 specialists (claim gathering), and the evaluator (independent verdicts) each make a real model call with real tools bound. No rule-based/template fallback exists anywhere: a failed LLM call fails that step loudly (empty claims, or the job fails and escrow refunds) rather than silently substituting a fixed decision. See `agents/llm.py`, `agents/tools.py`. |
 
 ## Environment setup
 
@@ -92,6 +93,17 @@ ANTHROPIC_API_KEY=               # required for the real LangChain orchestrator
 # OPENAI_API_KEY=                # alternative to Anthropic
 
 ETHERSCAN_API_KEY=               # optional -- upgrades wallet_flow to live data
+
+# Optional: one Gemini key per agent role instead of all 5 sharing
+# GOOGLE_API_KEY. Free tier is 20 requests/day *per key*, and every agent
+# (orchestrator, 3 specialists, evaluator) now makes real LLM calls -- a
+# single job can burn 5-6+ requests, so one shared key exhausts fast.
+# Any role left unset falls back to GOOGLE_API_KEY. See agents/llm.py.
+GOOGLE_API_KEY_ORCHESTRATOR=
+GOOGLE_API_KEY_ONCHAIN=
+GOOGLE_API_KEY_NEWS=
+GOOGLE_API_KEY_COMPLIANCE=
+GOOGLE_API_KEY_EVALUATOR=
 ```
 
 **Before running anything that moves money**, fund `requester` and
@@ -130,23 +142,33 @@ Defined in `settlement/escrow.py`:
 cd verifi-agents
 pip install -r requirements.txt
 # fund requester + orchestrator at faucet.circle.com first (see above)
-python -m cli.run_demo
+python -m cli.run_demo --demo
 ```
 
-This boots all 5 services in one process, reads real balances, and (if
-funded) runs:
-1. **Job 1** (Uniswap, no faults) -- every claim checked against a live
-   source or the real Arc chain -> `ACCEPT`, every specialist paid in
-   full, real transactions.
-2. **Job 2** (Aave) -- the compliance agent is told to lie about a real,
-   publicly-designated OFAC SDN address (a Tornado Cash contract,
-   sanctioned 2022-08-08) -- the evaluator's independent sanctions check
-   catches it -> `PARTIAL`, the compliance agent's payout is cut in half
-   via a real (smaller) transfer, the other two specialists still get
-   paid in full.
+This boots all 5 services in one process, reads real balances, then
+interactively prompts you for jobs to submit -- request text, protocol
+slug, budget, an address to screen, and an optional fault to inject.
+Nothing is scripted: what happens is whatever you actually ask for.
 
-Every transfer prints its real transaction hash to the terminal; look it
-up on Arc's testnet explorer for independent proof.
+To reproduce the two canonical demo scenes:
+
+- **A clean accept**: request something like "Assess Uniswap before
+  treasury deployment", protocol `uniswap`, leave the target address and
+  fault prompts blank -> every claim checked against a live source or the
+  real Arc chain -> `ACCEPT`, every specialist paid in full, real
+  transactions.
+- **A caught lie**: request an Aave assessment with compliance screening,
+  protocol `aave`, paste in the real OFAC-sanctioned address the prompt
+  suggests (a Tornado Cash contract, sanctioned 2022-08-08), and choose
+  `compliance` at the fault prompt -- the compliance agent is told to lie
+  about that address, and the evaluator's independent sanctions check
+  catches it -> payout cut, real (smaller) transfer.
+
+Run `python -m cli.run_demo` (no `--demo`) to just boot the services and
+submit jobs from another terminal instead, e.g. `POST
+http://127.0.0.1:8000/jobs`. Every transfer prints its real transaction
+hash to the terminal; look it up on Arc's testnet explorer for
+independent proof.
 
 ### Separate terminals (matches the PRD's original per-agent layout)
 
@@ -191,12 +213,22 @@ to `agents/orchestrator.py` once the frontend's dev origin is known.
 
 ## Upgrade paths (installed, documented, not wired in yet)
 
-- **Full x402 EIP-3009 "exact" EVM scheme** (`x402` package, already
-  installed): gasless authorizations via a self-hosted or third-party
-  facilitator. Not needed today because USDC is Arc's native gas token --
-  a payer already needs native balance, so there's no gasless advantage
-  to unlock. See `payments/x402.py` docstring for the exact classes
-  (`register_exact_evm_client/server/facilitator`) to wire in later.
+- **Full x402 EIP-3009 "exact" EVM scheme** (`x402` package): this
+  project *does* use the real installed `x402` package now -- the 402
+  response body and payment-proof payload are genuine
+  `x402.schemas.payments.PaymentRequired`/`PaymentRequirements`/
+  `PaymentPayload` types (`payments/x402.py`), spec-parseable by any
+  x402 client. What's *not* adopted is the package's registered EVM
+  "exact" scheme (`mechanisms/evm/exact/`), because it's built on EIP-3009
+  `transferWithAuthorization` -- a function only a real ERC-20 *contract*
+  implements, and Arc's USDC is native currency, not an ERC-20 (the
+  `0x3600...` address is only an optional read-view). Settlement uses a
+  custom `scheme="exact-native"` instead: a direct signed transfer,
+  independently re-verified on-chain -- same trust model, just no
+  gasless-authorization machinery a native-gas-token chain doesn't need.
+  See `payments/x402.py`'s docstring for the full reasoning and the
+  `register_exact_evm_client/server/facilitator` classes if this ever
+  needs to run against a chain where USDC really is an EIP-3009 ERC-20.
 - **Circle Developer-Controlled Wallets** (`circle-developer-controlled-wallets`,
   already installed): swaps raw `eth_account` keys for Circle-managed
   keys behind an entity-secret-encrypted API. Useful once this needs to
@@ -209,16 +241,24 @@ to `agents/orchestrator.py` once the frontend's dev origin is known.
 
 ```
 shared/               wire schema, config (real wallets + Arc network config), terminal logging
+contracts/
+  VeriFiEscrow.sol          on-chain escrow contract: lock/release/finalize/refund per job
+  compile.py, deploy.py     solcx compile + web3.py deploy to Arc testnet
+  VeriFiEscrow.json, deployed_address.txt   compiled ABI/bytecode + the live deployed address
 payments/
   chain.py                 real Arc testnet transfers + verification (web3.py + eth_account)
   wallet.py                role-keyed balance/transfer helpers on top of chain.py
-  x402.py                  402 handshake settled via real on-chain transactions
+  escrow_contract.py       lock/release/finalize/refund calls against the deployed VeriFiEscrow contract
+  x402.py                  402 handshake using the real x402 package's wire schema, settled on-chain
 data_sources/          DefiLlama, CoinGecko, Snapshot, Etherscan, GDELT, OFAC-fixture connectors
 agents/
-  orchestrator.py           owns the job lifecycle; real x402 payments; LLM or template decomposition
+  llm.py                    per-role LLM model selection (5 separate Gemini keys supported, see .env.example)
+  tools.py                  LangChain tool wrappers around data_sources/*, shared by specialists + evaluator
+  agent_schemas.py          structured-output schemas (ClaimDraft, ClaimVerdict) every agent's LLM call is constrained to
+  orchestrator.py           owns the job lifecycle; real x402 payments; LLM-only decomposition (no template fallback)
   langchain_planner.py      real LangChain tool-calling agent for specialist selection + memo writing
-  evaluator.py              independent claim verification, rule-based
-  specialists/              onchain_agent.py, news_agent.py, compliance_agent.py
+  evaluator.py              real LLM tool-calling agent -- independent claim verification, own judgment call
+  specialists/              onchain_agent.py, news_agent.py, compliance_agent.py -- each a real LLM tool-calling agent
 settlement/escrow.py   verdict + per-specialist payout rules -> real transfers
 storage/store.py       JSON-file-backed job + reputation metadata (not payment state -- that's on-chain)
 cli/run_demo.py        boots all 5 services, checks real balances, runs the two demo jobs
