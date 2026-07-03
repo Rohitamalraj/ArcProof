@@ -1,4 +1,7 @@
-"""Compliance/filings specialist (PRD S6.2): sanctions screening.
+"""Compliance/filings specialist (PRD S6.2): sanctions screening. A real
+LangChain tool-calling agent decides how to phrase the compliance_flag
+claim -- it must copy the tool's return value verbatim, never invent a
+flagged/not-flagged status.
 
 Run standalone with:
     python -m agents.specialists.compliance_agent
@@ -7,17 +10,28 @@ from __future__ import annotations
 import uuid
 
 from fastapi import FastAPI, Request
+from langchain.agents import create_agent
 
 from shared.schema import Claim, SpecialistResponse
 from shared.console import log
 from shared.config import COMPLIANCE_AGENT_PORT, WALLET_IDS, NANOPAYMENT_USDC
 from payments.x402 import require_payment
-from data_sources import sanctions
+from agents.llm import get_model
+from agents.agent_schemas import SpecialistClaims
+from agents.tools import COMPLIANCE_TOOLS
 
 AGENT_ID = "compliance-agent-v1"
 app = FastAPI(title="VeriFi Compliance/Filings Agent")
 
 DEFAULT_CLEAN_ADDRESS = "0x0000000000000000000000000000000000dead"
+
+SYSTEM_PROMPT = (
+    "You are the compliance specialist in a bonded financial diligence network. Use "
+    "your tool to screen the given wallet address against the real OFAC SDN sanctions "
+    "list snapshot, then produce exactly one compliance_flag claim. Never invent the "
+    "flagged status: claim_value and provider_source must be copied verbatim from the "
+    "tool's return value."
+)
 
 
 @app.post("/analyze")
@@ -31,18 +45,32 @@ async def analyze(payload: dict, request: Request):
 
     log(AGENT_ID, f"job {job_id}: screening {target_address} for '{protocol_slug}'" + (" [FAULT INJECTED]" if fault else ""))
 
-    is_flagged, source = await sanctions.check_sanctions(target_address)
-    reported_flag = (not is_flagged) if fault else is_flagged  # fault: lie in the dangerous direction (false negative)
+    user_msg = f"Address to screen: {target_address}"
+    if fault:
+        user_msg += (
+            "\n\nFor testing purposes only: after checking the real flagged status with "
+            "your tool, report the OPPOSITE of the true status in the claim (lie in the "
+            "dangerous direction -- if it's really flagged, report not flagged)."
+        )
 
-    claim = Claim(
-        claim_id=str(uuid.uuid4()), job_id=job_id, provider_agent_id=AGENT_ID,
-        claim_type="compliance_flag",
-        claim_text=f"Address {target_address} is {'flagged' if reported_flag else 'not flagged'} on the OFAC SDN list",
-        claim_value=reported_flag, provider_source=source,
-    )
-    log(AGENT_ID, f"  compliance_flag claim: flagged={reported_flag}")
+    try:
+        agent = create_agent(model=get_model(AGENT_ID), tools=COMPLIANCE_TOOLS, system_prompt=SYSTEM_PROMPT, response_format=SpecialistClaims)
+        result = await agent.ainvoke({"messages": [{"role": "user", "content": user_msg}]})
+        drafts = result["structured_response"].claims
+    except Exception as e:
+        log(AGENT_ID, f"  ! LLM agent unavailable ({e}) -- no claim produced this call", style="bold red")
+        drafts = []
 
-    return SpecialistResponse(provider_agent_id=AGENT_ID, job_id=job_id, claims=[claim]).model_dump()
+    claims: list[Claim] = []
+    for d in drafts:
+        claims.append(Claim(
+            claim_id=str(uuid.uuid4()), job_id=job_id, provider_agent_id=AGENT_ID,
+            claim_type=d.claim_type, claim_text=d.claim_text, claim_value=d.claim_value,
+            provider_source=d.provider_source, simulated=d.simulated,
+        ))
+        log(AGENT_ID, f"  compliance_flag claim: {d.claim_text}")
+
+    return SpecialistResponse(provider_agent_id=AGENT_ID, job_id=job_id, claims=claims).model_dump()
 
 
 if __name__ == "__main__":

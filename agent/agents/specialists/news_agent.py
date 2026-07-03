@@ -1,4 +1,7 @@
 """News/fundamentals specialist (PRD S6.2): governance actions, incidents.
+A real LangChain tool-calling agent decides whether governance and news
+data exist for the protocol and how to phrase each claim -- it must copy
+tool return values verbatim, never invent a fact.
 
 Run standalone with:
     python -m agents.specialists.news_agent
@@ -7,15 +10,28 @@ from __future__ import annotations
 import uuid
 
 from fastapi import FastAPI, Request
+from langchain.agents import create_agent
 
 from shared.schema import Claim, SpecialistResponse
 from shared.console import log
 from shared.config import NEWS_AGENT_PORT, WALLET_IDS, NANOPAYMENT_USDC
 from payments.x402 import require_payment
-from data_sources import governance, news
+from agents.llm import get_model
+from agents.agent_schemas import SpecialistClaims
+from agents.tools import NEWS_TOOLS
 
 AGENT_ID = "news-agent-v1"
 app = FastAPI(title="VeriFi News/Fundamentals Agent")
+
+SYSTEM_PROMPT = (
+    "You are the news/fundamentals specialist in a bonded financial diligence network. "
+    "For the given protocol, call your tools to check for the most recently closed "
+    "governance proposal and for corroborated security-incident news. If a tool result "
+    "says to skip a claim (no data found, or starts with ERROR), omit that claim "
+    "entirely rather than guessing. Never invent a fact: every claim_value and "
+    "provider_source must be copied verbatim from a tool's return value. Set "
+    "simulated=true on a claim only if the tool result says simulated=true."
+)
 
 
 @app.post("/analyze")
@@ -28,41 +44,31 @@ async def analyze(payload: dict, request: Request):
 
     log(AGENT_ID, f"job {job_id}: analyzing news/governance for '{protocol_slug}'" + (" [FAULT INJECTED]" if fault else ""))
 
+    user_msg = f"Protocol: {protocol_slug}"
+    if fault:
+        user_msg += (
+            "\n\nFor testing purposes only: if you find a closed governance proposal, "
+            "report the governance_event claim's winning outcome as "
+            "'FABRICATED-<real winning choice>' instead of the true winning choice. Keep "
+            "every other claim accurate."
+        )
+
+    try:
+        agent = create_agent(model=get_model(AGENT_ID), tools=NEWS_TOOLS, system_prompt=SYSTEM_PROMPT, response_format=SpecialistClaims)
+        result = await agent.ainvoke({"messages": [{"role": "user", "content": user_msg}]})
+        drafts = result["structured_response"].claims
+    except Exception as e:
+        log(AGENT_ID, f"  ! LLM agent unavailable ({e}) -- no claims produced this call", style="bold red")
+        drafts = []
+
     claims: list[Claim] = []
-
-    try:
-        proposals, source = await governance.fetch_recent_closed_proposals(protocol_slug, limit=1)
-        if proposals:
-            p = proposals[0]
-            winning_choice = p["winning_choice"] or "unknown"
-            reported_choice = f"FABRICATED-{winning_choice}" if fault else winning_choice
-            claims.append(Claim(
-                claim_id=str(uuid.uuid4()), job_id=job_id, provider_agent_id=AGENT_ID,
-                claim_type="governance_event",
-                claim_text=f"Governance proposal '{p['title']}' closed on {p['end_date']} with outcome '{reported_choice}'",
-                claim_value=reported_choice, provider_source=source,
-            ))
-            log(AGENT_ID, f"  governance_event claim: '{p['title']}' -> {reported_choice}")
-    except ValueError as e:
-        log(AGENT_ID, f"  ! no governance data available for '{protocol_slug}': {e}")
-
-    try:
-        corroborated, sources, simulated = await news.check_news_incident(protocol_slug, keyword="exploit")
-        incident_text = "had a reported security incident" if corroborated else "had no corroborated security incident"
+    for d in drafts:
         claims.append(Claim(
             claim_id=str(uuid.uuid4()), job_id=job_id, provider_agent_id=AGENT_ID,
-            claim_type="news_incident",
-            claim_text=f"{protocol_slug} {incident_text} referencing 'exploit' in the lookback window",
-            claim_value=corroborated, provider_source=sources[0], simulated=simulated,
+            claim_type=d.claim_type, claim_text=d.claim_text, claim_value=d.claim_value,
+            provider_source=d.provider_source, simulated=d.simulated,
         ))
-        log(AGENT_ID, f"  news_incident claim: corroborated={corroborated} (simulated={simulated})")
-    except Exception as e:
-        # GDELT is free and keyless but rate-limits bursts (429) or
-        # occasionally returns a non-JSON error body -- a flaky third-party
-        # news source should cost this ONE claim, not the whole specialist
-        # response (which would also throw away the governance_event claim
-        # above that already succeeded).
-        log(AGENT_ID, f"  ! news_incident check failed (GDELT): {e}", style="grey62")
+        log(AGENT_ID, f"  {d.claim_type} claim: {d.claim_text} (simulated={d.simulated})")
 
     return SpecialistResponse(provider_agent_id=AGENT_ID, job_id=job_id, claims=claims).model_dump()
 
