@@ -4,9 +4,13 @@ checks real Arc testnet balances, then leaves the services running so you
 
 By default this does NOT submit any jobs itself -- it only starts the
 services and waits, so the only jobs that ever run are ones you actually
-ask for. Pass --demo to also run the two built-in example jobs (one clean
-ACCEPT run, one with an injected lie that should get caught) before
-handing control back to you.
+ask for. Pass --demo to interactively submit real jobs from this terminal
+-- every job's request_text/protocol/budget/fault choice comes from
+whatever you type at the prompt, not a hardcoded script. Nothing here
+scripts a fixed "job 1 accepts, job 2 rejects" outcome; if you want to
+demonstrate the evaluator catching a lie, choose to inject a fault
+yourself when prompted -- the claim, the verification, and the payout cut
+are all still real.
 
 Every payment in any run is a real, mined Arc testnet transaction -- there
 is no mock ledger left in this codebase. Fund the `requester` and
@@ -16,7 +20,7 @@ tells you exactly what's missing rather than failing deep in a job run.
 
 Run from the verifi-agents/ directory:
     python -m cli.run_demo            # services only, no jobs submitted
-    python -m cli.run_demo --demo     # also runs the 2 built-in example jobs
+    python -m cli.run_demo --demo     # services + an interactive job-submission loop
 """
 from __future__ import annotations
 import asyncio
@@ -52,14 +56,16 @@ SERVICES = [
     ("compliance-agent-v1", compliance_app, COMPLIANCE_AGENT_PORT),
 ]
 
-# Real, publicly-documented OFAC SDN address (Tornado Cash, designated
-# 2022-08-08) -- used to demonstrate a genuine sanctions hit, not a fake one.
+# Suggested defaults shown in the interactive prompt -- never auto-assigned.
+# The sanctioned one is a real, publicly-documented OFAC SDN address
+# (Tornado Cash, designated 2022-08-08), offered so anyone wanting to
+# demo the compliance-catch scene doesn't have to go find a real one.
 SANCTIONED_DEMO_ADDRESS = "0x8589427373d6d84e98730d7795d8f6f8731fda0"
 CLEAN_DEMO_ADDRESS = "0x0000000000000000000000000000000000dead"
 
-# Kept small: real gas + real per-call nanopayments come out of these
-# wallets too, and the faucet caps at 20 USDC / address / 2 hours -- this
-# leaves headroom to rerun the demo several times in one funding window.
+# Suggested default budget -- kept small since real gas + real per-call
+# nanopayments come out of these wallets too, and the faucet caps at 20
+# USDC / address / 2 hours. Any value can be typed at the prompt instead.
 JOB_BUDGET_USDC = 0.30
 
 
@@ -154,8 +160,67 @@ def print_reputation(reputation: list[dict]) -> None:
     console.print(table)
 
 
+async def async_input(prompt: str) -> str:
+    # A plain input() would block the whole asyncio event loop -- since
+    # the 5 FastAPI services run as tasks on this same loop, that would
+    # freeze every service (including ones a frontend or another terminal
+    # might be hitting) while waiting on a keypress. Running it in the
+    # default executor keeps the loop free.
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, input, prompt)
+
+
+async def prompt_job() -> dict | None:
+    """Asks whoever is running this terminal what job to submit -- nothing
+    here is scripted. Returns None if they choose to stop."""
+    console.print()
+    rule("Submit a job (Ctrl+C or blank request to stop)", style="bold cyan")
+    request_text = (await async_input("Request text: ")).strip()
+    if not request_text:
+        return None
+
+    protocol_slug = ""
+    while not protocol_slug:
+        protocol_slug = (await async_input("Protocol slug (e.g. aave, uniswap, lido, curve): ")).strip()
+        if not protocol_slug:
+            console.print("  (required -- this is what gets looked up on DefiLlama/CoinGecko/etc.)")
+
+    budget_usdc = JOB_BUDGET_USDC
+    budget_raw = (await async_input(f"Budget USDC [{JOB_BUDGET_USDC}]: ")).strip()
+    if budget_raw:
+        try:
+            budget_usdc = float(budget_raw)
+            if budget_usdc <= 0:
+                raise ValueError("must be positive")
+        except ValueError:
+            console.print(f"  Couldn't parse '{budget_raw}' as a positive number -- using default {JOB_BUDGET_USDC}.")
+            budget_usdc = JOB_BUDGET_USDC
+
+    target_raw = (await async_input(
+        f"Target address to screen [{CLEAN_DEMO_ADDRESS} clean / {SANCTIONED_DEMO_ADDRESS} real OFAC hit / blank = clean]: "
+    )).strip()
+    target_address = target_raw or CLEAN_DEMO_ADDRESS
+    fault_raw = (await async_input(
+        "Inject a fault to demo the evaluator catching a lie? [none/onchain/news/compliance]: "
+    )).strip().lower()
+    inject_fault = fault_raw if fault_raw in ("onchain", "news", "compliance") else None
+
+    return {
+        "request_text": request_text,
+        "budget_usdc": budget_usdc,
+        "protocol_slug": protocol_slug,
+        "target_address": target_address,
+        "inject_fault": inject_fault,
+    }
+
+
 async def submit_job(client: httpx.AsyncClient, payload: dict) -> dict:
-    resp = await client.post(f"{ORCHESTRATOR_URL}/jobs", json=payload, timeout=120)
+    # Every specialist and the evaluator are now real LLM tool-calling
+    # agents (agents/orchestrator.py widens its own internal specialist/
+    # evaluator timeouts to 120s/180s for the same reason) -- a job with
+    # 2-3 specialists called sequentially plus one evaluator pass can
+    # comfortably exceed 120s end to end.
+    resp = await client.post(f"{ORCHESTRATOR_URL}/jobs", json=payload, timeout=300)
     if resp.status_code >= 400:
         log("cli", f"job submission failed: {resp.status_code} {resp.text}", style="bold red")
         resp.raise_for_status()
@@ -179,41 +244,32 @@ async def run_demo() -> None:
         return
 
     if "--demo" in sys.argv:
+        jobs_run = 0
         async with httpx.AsyncClient() as client:
-            rule("DEMO JOB 1 -- clean run against Uniswap, expect ACCEPT + full payment", style="bold cyan")
-            job1 = await submit_job(client, {
-                "request_text": "Assess Uniswap before treasury deployment.",
-                "template": "protocol_treasury_diligence",
-                "budget_usdc": JOB_BUDGET_USDC,
-                "protocol_slug": "uniswap",
-                "target_address": CLEAN_DEMO_ADDRESS,
-            })
-            print_job_result(job1)
+            while True:
+                try:
+                    payload = await prompt_job()
+                except (KeyboardInterrupt, EOFError):
+                    break
+                if payload is None:
+                    break
+                try:
+                    job = await submit_job(client, payload)
+                    print_job_result(job)
+                    jobs_run += 1
+                except Exception as e:
+                    log("cli", f"job failed: {e}", style="bold red")
 
-            rule("DEMO JOB 2 -- compliance agent lies about a sanctioned address, expect it caught", style="bold cyan")
-            job2 = await submit_job(client, {
-                "request_text": (
-                    "Assess Aave before treasury deployment. This treasury has strict "
-                    "compliance requirements, so screen the counterparty address against "
-                    "sanctions lists in addition to the usual financial and governance checks."
-                ),
-                "template": "protocol_treasury_diligence",
-                "budget_usdc": JOB_BUDGET_USDC,
-                "protocol_slug": "aave",
-                "target_address": SANCTIONED_DEMO_ADDRESS,
-                "inject_fault": "compliance",
-            })
-            print_job_result(job2)
+            if jobs_run:
+                reputation = (await client.get(f"{ORCHESTRATOR_URL}/reputation")).json()
+                print_reputation(reputation)
 
-            reputation = (await client.get(f"{ORCHESTRATOR_URL}/reputation")).json()
-            print_reputation(reputation)
-
-            rule("Real Arc testnet balances after both jobs")
-            balances = (await client.get(f"{ORCHESTRATOR_URL}/wallets")).json()
-            for role, bal in sorted(balances.items()):
-                console.print(f"  {role:22s} {bal:12.6f} USDC")
+                rule(f"Real Arc testnet balances after {jobs_run} job(s)")
+                balances = (await client.get(f"{ORCHESTRATOR_URL}/wallets")).json()
+                for role, bal in sorted(balances.items()):
+                    console.print(f"  {role:22s} {bal:12.6f} USDC")
     else:
-        rule("No jobs submitted -- pass --demo to run the 2 built-in examples", style="grey62")
+        rule("No jobs submitted -- pass --demo to submit real jobs interactively", style="grey62")
 
     rule("Services are live. Submit jobs from another terminal (POST http://127.0.0.1:8000/jobs). Press Ctrl+C to stop.", style="bold cyan")
 

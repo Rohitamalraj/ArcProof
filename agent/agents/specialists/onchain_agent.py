@@ -1,4 +1,7 @@
-"""On-chain data specialist (PRD S6.2): TVL, treasury wallet flow, holder concentration.
+"""On-chain data specialist (PRD S6.2): TVL, treasury wallet flow, holder
+concentration. A real LangChain tool-calling agent decides which on-chain
+metrics to gather for a given protocol and how to phrase each claim --
+it must copy tool return values verbatim, never invent a number.
 
 Runs as its own FastAPI service, paid per call via the x402 handshake in
 payments/x402.py. Run standalone with:
@@ -8,16 +11,29 @@ from __future__ import annotations
 import uuid
 
 from fastapi import FastAPI, Request
+from langchain.agents import create_agent
 
 from shared.schema import Claim, SpecialistResponse
 from shared.console import log
 from shared.config import ONCHAIN_AGENT_PORT, WALLET_IDS, NANOPAYMENT_USDC
 from payments.x402 import require_payment
-from data_sources import defillama, explorer, price
-from data_sources.explorer import PROTOCOL_TREASURY_ADDRESS
+from agents.llm import get_model
+from agents.agent_schemas import SpecialistClaims
+from agents.tools import ONCHAIN_TOOLS
 
 AGENT_ID = "onchain-agent-v1"
 app = FastAPI(title="VeriFi On-Chain Data Agent")
+
+SYSTEM_PROMPT = (
+    "You are the on-chain data specialist in a bonded financial diligence network. "
+    "For the given protocol, call your tools to gather every relevant on-chain metric: "
+    "current TVL, 7-day price change, treasury wallet flow to a labeled exchange, and "
+    "top-10 holder concentration. Call every applicable tool once. If a tool result "
+    "starts with ERROR, omit that claim entirely rather than guessing a value. Never "
+    "invent or estimate a number: every claim_value and provider_source must be copied "
+    "verbatim from a tool's return value. Set simulated=true on a claim only if the "
+    "tool result says simulated=true."
+)
 
 
 @app.post("/analyze")
@@ -30,52 +46,30 @@ async def analyze(payload: dict, request: Request):
 
     log(AGENT_ID, f"job {job_id}: analyzing on-chain data for '{protocol_slug}'" + (" [FAULT INJECTED]" if fault else ""))
 
+    user_msg = f"Protocol: {protocol_slug}"
+    if fault:
+        user_msg += (
+            "\n\nFor testing purposes only: after fetching the real tvl value with your "
+            "tool, report the tvl claim_value as 1.5x that real value instead of the true "
+            "one. Keep every other claim accurate."
+        )
+
+    try:
+        agent = create_agent(model=get_model(AGENT_ID), tools=ONCHAIN_TOOLS, system_prompt=SYSTEM_PROMPT, response_format=SpecialistClaims)
+        result = await agent.ainvoke({"messages": [{"role": "user", "content": user_msg}]})
+        drafts = result["structured_response"].claims
+    except Exception as e:
+        log(AGENT_ID, f"  ! LLM agent unavailable ({e}) -- no claims produced this call", style="bold red")
+        drafts = []
+
     claims: list[Claim] = []
-
-    try:
-        tvl, source = await defillama.fetch_tvl(protocol_slug)
-        reported_tvl = tvl * 1.5 if fault else tvl
+    for d in drafts:
         claims.append(Claim(
             claim_id=str(uuid.uuid4()), job_id=job_id, provider_agent_id=AGENT_ID,
-            claim_type="tvl",
-            claim_text=f"{protocol_slug} TVL is ${reported_tvl:,.0f}",
-            claim_value=reported_tvl, provider_source=source,
+            claim_type=d.claim_type, claim_text=d.claim_text, claim_value=d.claim_value,
+            provider_source=d.provider_source, simulated=d.simulated,
         ))
-        log(AGENT_ID, f"  tvl claim: ${reported_tvl:,.0f} (source: {source})")
-    except Exception as e:
-        log(AGENT_ID, f"  ! failed to fetch TVL for '{protocol_slug}': {e}")
-
-    try:
-        pct_change, source = await price.fetch_price_change_pct(protocol_slug)
-        claims.append(Claim(
-            claim_id=str(uuid.uuid4()), job_id=job_id, provider_agent_id=AGENT_ID,
-            claim_type="price_change",
-            claim_text=f"{protocol_slug} token price changed {pct_change:+.1f}% over the last 7 days",
-            claim_value=round(pct_change, 2), provider_source=source,
-        ))
-        log(AGENT_ID, f"  price_change claim: {pct_change:+.1f}% (source: {source})")
-    except Exception as e:
-        log(AGENT_ID, f"  ! failed to fetch price history for '{protocol_slug}': {e}")
-
-    address = PROTOCOL_TREASURY_ADDRESS.get(protocol_slug)
-    if address:
-        touched, source, simulated = await explorer.check_wallet_flow(address, exchange_hint="binance")
-        claims.append(Claim(
-            claim_id=str(uuid.uuid4()), job_id=job_id, provider_agent_id=AGENT_ID,
-            claim_type="wallet_flow",
-            claim_text=f"Treasury wallet {address[:10]}... {'sent funds to' if touched else 'showed no flow to'} a labeled exchange wallet in the lookback window",
-            claim_value=touched, provider_source=source, simulated=simulated,
-        ))
-        log(AGENT_ID, f"  wallet_flow claim: touched_exchange={touched} (simulated={simulated})")
-
-    pct, source, simulated = await explorer.token_concentration_top10_pct(protocol_slug)
-    claims.append(Claim(
-        claim_id=str(uuid.uuid4()), job_id=job_id, provider_agent_id=AGENT_ID,
-        claim_type="token_concentration",
-        claim_text=f"Top 10 holders control {pct:.1f}% of {protocol_slug} supply",
-        claim_value=pct, provider_source=source, simulated=simulated,
-    ))
-    log(AGENT_ID, f"  token_concentration claim: {pct:.1f}% (simulated={simulated})")
+        log(AGENT_ID, f"  {d.claim_type} claim: {d.claim_text} (simulated={d.simulated})")
 
     return SpecialistResponse(provider_agent_id=AGENT_ID, job_id=job_id, claims=claims).model_dump()
 
