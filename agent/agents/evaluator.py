@@ -1,12 +1,16 @@
-"""Evaluator agent (PRD S9): re-derives every claim from an independent
-live source and assigns a per-claim verdict. Deliberately rule-based, not
-model-based -- see settlement/escrow.py docstring for why.
+"""Evaluator agent (PRD S9): a real LangChain tool-calling agent that
+independently re-derives every claim from its own live tool calls and
+judges match/mismatch/unverifiable. Upgraded from a fixed +/-5% threshold
+table to full LLM judgment -- the model decides what counts as a match
+using the same live sources as before, it just applies judgment instead
+of a hard cutoff. This trades some payout determinism for genuine
+agentic reasoning; settlement/escrow.py is unaffected since it only ever
+reads claim.verification_status, whichever agent set it.
 
 This service does NOT trust the specialist's claim_text for identifying
-*what* to check (e.g. which address, which protocol) -- it looks that up
-independently (data_sources.explorer.PROTOCOL_TREASURY_ADDRESS, the
-request's own target_address) and only uses the specialist's claim_value
-as the number/fact being checked.
+*what* to check -- its tools look up canonical addresses/spaces
+themselves (data_sources.explorer.PROTOCOL_TREASURY_ADDRESS) -- only
+claim_value is what's being judged.
 
 Run standalone with:
     python -m agents.evaluator
@@ -14,95 +18,36 @@ Run standalone with:
 from __future__ import annotations
 
 from fastapi import FastAPI
+from langchain.agents import create_agent
 
 from shared.schema import Claim
 from shared.console import log
 from shared.config import EVALUATOR_PORT
-from data_sources import defillama, price, explorer, governance, news, sanctions
+from agents.llm import get_model
+from agents.agent_schemas import EvaluationOutput
+from agents.tools import EVALUATOR_TOOLS
 
 app = FastAPI(title="VeriFi Evaluator Agent")
 
-NUMERIC_TOLERANCE_PCT = 5.0  # documented in settlement/escrow.py; keep in sync
-
-
-async def _verify(claim: Claim, protocol_slug: str, target_address: str | None) -> None:
-    if claim.claim_type == "tvl":
-        actual, source = await defillama.fetch_tvl(protocol_slug)
-        claim.verification_value = actual
-        claim.verification_source = source
-        if actual:
-            delta_pct = ((float(claim.claim_value) - actual) / actual) * 100
-            claim.verification_delta = round(delta_pct, 2)
-            claim.verification_status = "match" if abs(delta_pct) <= NUMERIC_TOLERANCE_PCT else "mismatch"
-        else:
-            claim.verification_status = "unverifiable"
-
-    elif claim.claim_type == "price_change":
-        actual, source = await price.fetch_price_change_pct(protocol_slug)
-        delta = float(claim.claim_value) - actual
-        claim.verification_value = round(actual, 2)
-        claim.verification_source = source
-        claim.verification_delta = round(delta, 2)
-        claim.verification_status = "match" if abs(delta) <= NUMERIC_TOLERANCE_PCT else "mismatch"
-
-    elif claim.claim_type == "token_concentration":
-        actual, source, simulated = await explorer.token_concentration_top10_pct(protocol_slug)
-        delta = float(claim.claim_value) - actual
-        claim.verification_value = actual
-        claim.verification_source = source
-        claim.verification_delta = round(delta, 2)
-        claim.verification_status = "match" if abs(delta) <= NUMERIC_TOLERANCE_PCT else "mismatch"
-        claim.verification_note = "simulated data source" if simulated else None
-
-    elif claim.claim_type == "wallet_flow":
-        address = explorer.PROTOCOL_TREASURY_ADDRESS.get(protocol_slug)
-        if not address:
-            claim.verification_status = "unverifiable"
-            return
-        actual, source, simulated = await explorer.check_wallet_flow(address, exchange_hint="binance")
-        claimed = bool(claim.claim_value)
-        claim.verification_value = actual
-        claim.verification_source = source
-        claim.verification_status = "match" if actual == claimed else "mismatch"
-        claim.verification_note = "simulated data source" if simulated else None
-
-    elif claim.claim_type == "governance_event":
-        try:
-            proposals, source = await governance.fetch_recent_closed_proposals(protocol_slug, limit=1)
-        except ValueError:
-            claim.verification_status = "unverifiable"
-            return
-        if not proposals:
-            claim.verification_status = "unverifiable"
-            return
-        actual_choice = proposals[0]["winning_choice"]
-        claim.verification_value = actual_choice
-        claim.verification_source = source
-        claim.verification_status = "match" if str(claim.claim_value) == str(actual_choice) else "mismatch"
-
-    elif claim.claim_type == "news_incident":
-        corroborated, sources, simulated = await news.check_news_incident(protocol_slug, keyword="exploit")
-        claim.verification_source = sources[0]
-        claim.verification_note = "simulated data source" if simulated else None
-        if not corroborated:
-            # PRD S9.3: single-source news claims are unverifiable, not a match/mismatch,
-            # and never count against the provider.
-            claim.verification_status = "unverifiable"
-        else:
-            claim.verification_value = corroborated
-            claim.verification_status = "match" if bool(claim.claim_value) == corroborated else "mismatch"
-
-    elif claim.claim_type == "compliance_flag":
-        if not target_address:
-            claim.verification_status = "unverifiable"
-            return
-        actual_flag, source = await sanctions.check_sanctions(target_address)
-        claim.verification_value = actual_flag
-        claim.verification_source = source
-        claim.verification_status = "match" if bool(claim.claim_value) == actual_flag else "mismatch"
-
-    else:
-        claim.verification_status = "unverifiable"
+SYSTEM_PROMPT = (
+    "You are the independent evaluator in a bonded financial diligence network. You are "
+    "given a list of claims made by paid specialist agents, each with a claim_id. For "
+    "EVERY claim, use your tools to independently re-fetch the real current value from a "
+    "live source -- never trust the claim's stated value or source, and never skip a "
+    "tool call just because the claim looks plausible.\n\n"
+    "Judge each claim:\n"
+    "- 'match' if the claim is substantively correct (for numeric claims, ~5% is a "
+    "normal tolerance for noisy real-time data -- use judgment on borderline cases)\n"
+    "- 'mismatch' if the claim is materially wrong or fabricated\n"
+    "- 'unverifiable' if your tool could not produce an independent value for this claim "
+    "(no data available, or a single-source news claim, which is unverifiable rather "
+    "than a mismatch) -- never guess a verdict just to avoid 'unverifiable'\n\n"
+    "Return exactly one verdict per claim_id given, using the same claim_ids. For each "
+    "verdict, set verification_value/verification_source to what your tool returned, "
+    "verification_delta to the numeric difference (claim minus independent value) for "
+    "numeric claims (else leave it null), and a short verification_note explaining your "
+    "judgment -- mention if the source was flagged simulated."
+)
 
 
 @app.post("/evaluate")
@@ -114,12 +59,43 @@ async def evaluate(payload: dict):
 
     log("evaluator", f"job {job_id}: independently verifying {len(claims)} claims")
 
+    if not claims:
+        # Nothing to verify -- there is no claim_id an LLM call could
+        # return a verdict for, so the loop below would discard whatever
+        # it said anyway. Calling the model here would only waste a real
+        # request (and real quota) for a result nothing uses.
+        return {"claims": []}
+
+    claims_text = "\n".join(
+        f"- claim_id={c.claim_id} type={c.claim_type} text={c.claim_text!r} "
+        f"claim_value={c.claim_value!r} (reported by {c.provider_agent_id})"
+        for c in claims
+    )
+    user_msg = (
+        f"Protocol slug: {protocol_slug}\n"
+        f"Target address for compliance checks: {target_address or '(none given)'}\n\n"
+        f"Claims to verify:\n{claims_text}"
+    )
+
+    try:
+        agent = create_agent(model=get_model("evaluator"), tools=EVALUATOR_TOOLS, system_prompt=SYSTEM_PROMPT, response_format=EvaluationOutput)
+        result = await agent.ainvoke({"messages": [{"role": "user", "content": user_msg}]})
+        verdicts = {v.claim_id: v for v in result["structured_response"].verdicts}
+    except Exception as e:
+        log("evaluator", f"  ! evaluator agent unavailable ({e}) -- all claims marked unverifiable", style="bold red")
+        verdicts = {}
+
     for claim in claims:
-        try:
-            await _verify(claim, protocol_slug, target_address)
-        except Exception as e:
+        v = verdicts.get(claim.claim_id)
+        if v is None:
             claim.verification_status = "unverifiable"
-            claim.verification_note = f"verification error: {e}"
+            claim.verification_note = "evaluator agent returned no verdict for this claim"
+        else:
+            claim.verification_status = v.verification_status
+            claim.verification_value = v.verification_value
+            claim.verification_source = v.verification_source
+            claim.verification_delta = v.verification_delta
+            claim.verification_note = v.verification_note
 
         delta_str = f" (delta {claim.verification_delta:+.2f}%)" if claim.verification_delta is not None else ""
         style = {"match": "bold green", "mismatch": "bold red", "unverifiable": "grey62"}.get(claim.verification_status, "white")

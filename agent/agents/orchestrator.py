@@ -18,12 +18,10 @@ from fastapi import FastAPI, HTTPException
 
 from shared.schema import JobRequest, JobRecord, Claim
 from shared.console import log, rule
-from shared.config import (
-    ORCHESTRATOR_PORT, ONCHAIN_AGENT_URL, NEWS_AGENT_URL, COMPLIANCE_AGENT_URL,
-    EVALUATOR_URL, WALLETS, ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY,
-)
+from shared.config import ORCHESTRATOR_PORT, ONCHAIN_AGENT_URL, NEWS_AGENT_URL, COMPLIANCE_AGENT_URL, EVALUATOR_URL, WALLETS
 from payments.x402 import x402_post
 from payments.wallet import ledger
+from payments import escrow_contract
 from storage.store import job_store, reputation_store
 from settlement.escrow import settle
 from agents import langchain_planner
@@ -38,32 +36,15 @@ SPECIALIST_URLS: dict[str, str] = {
     "compliance-agent-v1": COMPLIANCE_AGENT_URL,
 }
 
-# Fixed Template A/B subtask decomposition (PRD S8) -- used only as a
-# fallback when no LLM is configured. When ANTHROPIC_API_KEY or
-# OPENAI_API_KEY is set, `decompose()` instead asks a real LangChain
-# tool-calling agent (agents/langchain_planner.py) which specialists this
-# specific request actually needs.
-TEMPLATE_SPECIALISTS: dict[str, list[str]] = {
-    "protocol_treasury_diligence": ["onchain-agent-v1", "news-agent-v1", "compliance-agent-v1"],
-    "yield_opportunity_review": ["onchain-agent-v1", "compliance-agent-v1"],
-}
 
-
-async def decompose(job_req: JobRequest) -> list[str]:
-    if GOOGLE_API_KEY or ANTHROPIC_API_KEY or OPENAI_API_KEY:
-        try:
-            plan = await langchain_planner.plan_specialists(job_req)
-            return plan.specialist_ids
-        except Exception as e:
-            # Free-tier LLM quotas (daily caps, not per-minute) are a real
-            # external dependency this job shouldn't die on -- the payment/
-            # verification pipeline underneath doesn't care who picked the
-            # specialist list. Fall back to the fixed template rather than
-            # failing (and having already locked the requester's budget).
-            log("orchestrator", f"LLM planner unavailable ({e}) -- falling back to fixed Template A/B list", style="grey62")
-            return TEMPLATE_SPECIALISTS[job_req.template]
-    log("orchestrator", "no LLM configured -- using fixed Template A/B specialist list (see README)", style="grey62")
-    return TEMPLATE_SPECIALISTS[job_req.template]
+async def decompose(job_req: JobRequest) -> langchain_planner.SpecialistPlan:
+    # No fixed-template fallback: this is a real LLM decision or the job
+    # fails loudly (caught by create_job's outer try/except, which refunds
+    # the locked escrow) -- a silent substitute decision here would be
+    # indistinguishable from a real one downstream. Returns the full plan
+    # (not just specialist_ids) since it also carries the LLM-inferred
+    # template_label used when the requester didn't supply their own.
+    return await langchain_planner.plan_specialists(job_req)
 
 
 async def call_specialist(client: httpx.AsyncClient, name: str, job_req: JobRequest, job_id: str) -> list[Claim]:
@@ -80,26 +61,9 @@ async def call_specialist(client: httpx.AsyncClient, name: str, job_req: JobRequ
 
 
 async def assemble_memo(job_req: JobRequest, claims: list[Claim]) -> str:
-    if GOOGLE_API_KEY or ANTHROPIC_API_KEY or OPENAI_API_KEY:
-        try:
-            return await langchain_planner.write_memo(job_req, claims)
-        except Exception as e:
-            log("orchestrator", f"LLM memo writer unavailable ({e}) -- falling back to templated memo", style="grey62")
-            return _template_memo(job_req, claims)
-    return _template_memo(job_req, claims)
-
-
-def _template_memo(job_req: JobRequest, claims: list[Claim]) -> str:
-    lines = [f"# Diligence Memo: {job_req.protocol_slug}", "", job_req.request_text, ""]
-    by_type: dict[str, list[Claim]] = {}
-    for c in claims:
-        by_type.setdefault(c.claim_type, []).append(c)
-    for claim_type, group in by_type.items():
-        lines.append(f"## {claim_type}")
-        for c in group:
-            lines.append(f"- {c.claim_text} (source: {c.provider_source})")
-        lines.append("")
-    return "\n".join(lines)
+    # Same "agent or loud failure" rule as decompose() -- no templated
+    # memo fallback.
+    return await langchain_planner.write_memo(job_req, claims)
 
 
 @app.post("/jobs")
@@ -111,7 +75,7 @@ async def create_job(job_req: JobRequest):
     job = JobRecord(
         job_id=job_id,
         requester_id=job_req.requester_wallet,
-        template=job_req.template,
+        template=job_req.template or "unclassified",  # replaced with the LLM's inferred label below once decompose() runs
         request_text=job_req.request_text,
         protocol_slug=job_req.protocol_slug,
         budget_usdc=job_req.budget_usdc,
@@ -120,19 +84,27 @@ async def create_job(job_req: JobRequest):
     )
 
     try:
-        ledger.transfer(job_req.requester_wallet, "escrow", job_req.budget_usdc, memo=f"job {job_id}: lock budget")
+        escrow_contract.lock(job_id, job_req.requester_wallet, job_req.budget_usdc)
     except Exception as e:
         job.status = "failed"
         job_store.save(job)
-        raise HTTPException(status_code=402, detail=f"could not lock budget in escrow: {e}")
+        raise HTTPException(status_code=402, detail=f"could not lock budget in escrow contract: {e}")
 
     try:
-        specialists = await decompose(job_req)
-        job.subtasks = specialists
+        plan = await decompose(job_req)
+        job.subtasks = plan.specialist_ids
+        if not job_req.template:
+            job.template = plan.template_label
 
         all_claims: list[Claim] = []
-        async with httpx.AsyncClient(timeout=30) as client:
-            for name in specialists:
+        # Each specialist is now a real LLM tool-calling agent (multiple
+        # tool calls + reasoning round-trips per request), which routinely
+        # takes longer than a single deterministic handler did -- 30s was
+        # tuned for the old rule-based specialists and was timing out
+        # client-side while the agent kept working server-side past the
+        # point its claims could still be used.
+        async with httpx.AsyncClient(timeout=120) as client:
+            for name in plan.specialist_ids:
                 try:
                     claims = await call_specialist(client, name, job_req, job_id)
                     all_claims.extend(claims)
@@ -142,8 +114,11 @@ async def create_job(job_req: JobRequest):
         job.claims = all_claims
         job.final_memo = await assemble_memo(job_req, all_claims)
 
-        log("orchestrator", f"assembled {len(all_claims)} claims from {len(specialists)} specialists -> handing off to evaluator")
-        async with httpx.AsyncClient(timeout=30) as client:
+        log("orchestrator", f"assembled {len(all_claims)} claims from {len(plan.specialist_ids)} specialists -> handing off to evaluator")
+        # The evaluator now makes one real LLM agent call per job covering
+        # every claim (potentially several tool calls) -- same timeout
+        # widening as above, and it scales with claim count.
+        async with httpx.AsyncClient(timeout=180) as client:
             eval_resp = await client.post(f"{EVALUATOR_URL}/evaluate", json={
                 "job_id": job_id,
                 "protocol_slug": job_req.protocol_slug,
@@ -160,18 +135,18 @@ async def create_job(job_req: JobRequest):
         return job.model_dump()
 
     except Exception as e:
-        # Budget is already locked in escrow at this point (see above) --
-        # any failure past that line must not leave real funds stranded
-        # with no job record and no way back to the requester. Refund for
-        # real, on-chain, same as any other settlement transfer.
-        log("orchestrator", f"job {job_id} failed after budget lock: {e} -- refunding escrow -> requester", style="bold red")
+        # Budget is already locked in the escrow contract at this point (see
+        # above) -- any failure past that line must not leave real funds
+        # stranded with no job record and no way back to the requester.
+        # refund() is a real contract call, same trust model as any release.
+        log("orchestrator", f"job {job_id} failed after budget lock: {e} -- refunding escrow contract -> requester", style="bold red")
         job.status = "failed"
         try:
-            ledger.transfer("escrow", job_req.requester_wallet, job_req.budget_usdc, memo=f"job {job_id}: refund after failure")
+            escrow_contract.refund(job_id)
         except Exception as refund_error:
-            log("orchestrator", f"  ! refund ALSO failed: {refund_error} -- funds remain in escrow, job marked failed", style="bold red")
+            log("orchestrator", f"  ! refund ALSO failed: {refund_error} -- funds remain locked in contract, job marked failed", style="bold red")
         job_store.save(job)
-        raise HTTPException(status_code=500, detail=f"job failed after budget was locked; escrow refunded to requester where possible: {e}")
+        raise HTTPException(status_code=500, detail=f"job failed after budget was locked; escrow contract refunded to requester where possible: {e}")
 
 
 @app.get("/jobs/{job_id}")
@@ -194,7 +169,20 @@ async def get_reputation():
 
 @app.get("/wallets")
 async def get_wallets():
-    return ledger.all_balances()
+    balances = ledger.all_balances()
+    try:
+        from payments.chain import get_balance_usdc
+        balances["escrow-contract"] = get_balance_usdc(escrow_contract.contract_address())
+    except Exception:
+        pass
+    try:
+        from payments.chain import get_balance_usdc
+        from shared.config import CIRCLE_REQUESTER_ADDRESS
+        if CIRCLE_REQUESTER_ADDRESS:
+            balances["requester-circle"] = get_balance_usdc(CIRCLE_REQUESTER_ADDRESS)
+    except Exception:
+        pass
+    return balances
 
 
 if __name__ == "__main__":
