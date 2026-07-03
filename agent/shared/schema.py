@@ -20,7 +20,6 @@ ClaimType = Literal[
 VerificationStatus = Literal["pending", "match", "mismatch", "unverifiable"]
 JobStatus = Literal["pending", "in_progress", "accepted", "partial_accepted", "rejected", "failed"]
 Verdict = Literal["accept", "partial", "reject"]
-Template = Literal["protocol_treasury_diligence", "yield_opportunity_review"]
 
 
 class Claim(BaseModel):
@@ -48,7 +47,7 @@ class SpecialistResponse(BaseModel):
 
 class JobRequest(BaseModel):
     request_text: str
-    template: Template = "protocol_treasury_diligence"
+    template: Optional[str] = None  # optional requester-supplied label/hint; if omitted, the orchestrator's LLM infers a fitting one from request_text (see agents/langchain_planner.py SpecialistPlan.template_label) -- not a fixed enum, any request gets its own category
     budget_usdc: float = Field(gt=0)
     protocol_slug: str  # e.g. "aave", "lido" -- DefiLlama slug, also used for price/governance lookups
     requester_wallet: str = "requester"
@@ -71,7 +70,7 @@ class ProviderPayout(BaseModel):
 class JobRecord(BaseModel):
     job_id: str
     requester_id: str
-    template: Template
+    template: str  # requester-supplied or LLM-inferred label (see JobRequest.template) -- descriptive, not a fixed category
     request_text: str
     protocol_slug: str
     budget_usdc: float

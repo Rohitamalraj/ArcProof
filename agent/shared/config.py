@@ -41,6 +41,35 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
+# --- Circle Developer-Controlled Wallets (payments/circle_wallet.py) ---
+CIRCLE_API_KEY = os.getenv("CIRCLE_API_KEY", "")
+CIRCLE_ENTITY_SECRET = os.getenv("CIRCLE_ENTITY_SECRET", "")
+CIRCLE_WALLET_SET_ID = os.getenv("CIRCLE_WALLET_SET_ID", "")
+# Real Circle-managed wallet standing in for the `requester` role's
+# eth_account key specifically -- see payments/escrow_contract.py's lock().
+CIRCLE_REQUESTER_WALLET_ID = os.getenv("CIRCLE_REQUESTER_WALLET_ID", "")
+CIRCLE_REQUESTER_ADDRESS = os.getenv("CIRCLE_REQUESTER_ADDRESS", "")
+
+# Optional: one Gemini API key per agent role. Google's free tier is a
+# 20-requests/DAY cap *per key*, and every agent now makes real LLM calls
+# (see agents/llm.py) -- five agents sharing one key exhausts it after a
+# couple of jobs. Set these to five separate keys (aistudio.google.com/apikey,
+# one per Google account/project) to give each agent its own 20/day bucket.
+# Any role left unset falls back to the shared GOOGLE_API_KEY above.
+GOOGLE_API_KEY_ORCHESTRATOR = os.getenv("GOOGLE_API_KEY_ORCHESTRATOR", "") or GOOGLE_API_KEY
+GOOGLE_API_KEY_ONCHAIN = os.getenv("GOOGLE_API_KEY_ONCHAIN", "") or GOOGLE_API_KEY
+GOOGLE_API_KEY_NEWS = os.getenv("GOOGLE_API_KEY_NEWS", "") or GOOGLE_API_KEY
+GOOGLE_API_KEY_COMPLIANCE = os.getenv("GOOGLE_API_KEY_COMPLIANCE", "") or GOOGLE_API_KEY
+GOOGLE_API_KEY_EVALUATOR = os.getenv("GOOGLE_API_KEY_EVALUATOR", "") or GOOGLE_API_KEY
+
+GOOGLE_API_KEYS_BY_ROLE = {
+    "orchestrator": GOOGLE_API_KEY_ORCHESTRATOR,
+    "onchain-agent-v1": GOOGLE_API_KEY_ONCHAIN,
+    "news-agent-v1": GOOGLE_API_KEY_NEWS,
+    "compliance-agent-v1": GOOGLE_API_KEY_COMPLIANCE,
+    "evaluator": GOOGLE_API_KEY_EVALUATOR,
+}
+
 # Flat per-call nanopayment fee (PRD S7 step 4): paid immediately via x402
 # regardless of verification outcome -- it's the "you responded" fee, not
 # the conditional payment. Real on-chain transfer, same as any other amount

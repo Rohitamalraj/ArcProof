@@ -1,11 +1,17 @@
 """Conditional settlement (PRD S9.4/S9.5, implementation guide S4).
 
-Deliberately rule-based, not model-based, so every accept/partial/reject
-decision is auditable from this file alone -- see PRD "Non-Functional
-Requirements: Auditability".
+The verdict/payout math below is still rule-based and auditable from this
+file alone (PRD "Non-Functional Requirements: Auditability") -- it only
+ever consumes claim.verification_status (match/mismatch/unverifiable).
+What sets that status changed: agents/evaluator.py is now a real LLM
+agent making a judgment call per claim (with ~5% numeric tolerance as
+guidance, not a hard-coded cutoff), not a fixed threshold table. That
+per-claim judgment is no longer independently re-derivable by hand the
+way a threshold comparison was -- a deliberate tradeoff for genuine
+agentic verification, accepted in favor of full "true agent" behavior
+across every specialist and the evaluator.
 
 Verdict thresholds (document these -- PRD S9.4 NFR requires it):
-  - Numeric claim match tolerance: +/-5% of the independently-sourced value.
   - Per-provider payout: full if 0 mismatches, 50% if exactly 1 mismatch,
     withheld (0%) if 2+ mismatches. Same N=1 threshold the PRD suggests at
     job level, reapplied per-provider so each specialist is judged on its
@@ -16,19 +22,21 @@ Verdict thresholds (document these -- PRD S9.4 NFR requires it):
     by itself force "reject".
   - Unverifiable claims never count toward mismatches or payment.
 
-`ledger.transfer(...)` below is real -- every payout is a mined Arc
-testnet transaction (payments/chain.py), not a database write. Withheld
-funds simply never leave the escrow wallet; there's no separate "hold"
-step needed on a real chain. `compute_job_verdict` and
-`compute_provider_payout` never touch payments directly, which is what
-keeps the verdict math auditable independent of how settlement executes.
+Payouts below release through the deployed VeriFiEscrow contract
+(payments/escrow_contract.py, contracts/VeriFiEscrow.sol) -- every payout
+is a real `release()` contract call mined on Arc testnet, and the job is
+`finalize()`d at the end so any withheld remainder is enforced by the
+contract itself (it simply never leaves the contract), not by Python
+bookkeeping alone. `compute_job_verdict` and `compute_provider_payout`
+never touch payments directly, which is what keeps the verdict math
+auditable independent of how settlement executes.
 """
 from __future__ import annotations
 from collections import defaultdict
 
 from shared.schema import Claim, JobRecord, ProviderPayout, Verdict
 from shared.console import log
-from payments.wallet import ledger
+from payments import escrow_contract
 from storage.store import reputation_store
 
 NUMERIC_CLAIM_TYPES = {"tvl", "price_change", "token_concentration"}
@@ -104,18 +112,8 @@ async def settle(job: JobRecord) -> JobRecord:
         payouts.append(payout)
 
         if payout.paid_usdc > 0:
-            ledger.transfer(
-                "escrow",
-                provider_id,
-                payout.paid_usdc,
-                memo=f"job {job.job_id} conditional payout ({payout.outcome})",
-            )
+            escrow_contract.release(job.job_id, provider_id, payout.paid_usdc, payout.outcome)
             total_paid += payout.paid_usdc
-        withheld = payout.allocated_usdc - payout.paid_usdc
-        if withheld > 1e-9:
-            ledger.refund_or_hold(
-                "escrow", withheld, memo=f"job {job.job_id}: withheld from {provider_id} ({payout.outcome})"
-            )
 
         reputation_store.record_job(provider_id, payout.matches, payout.mismatches, payout.unverifiable)
         log(
@@ -123,6 +121,8 @@ async def settle(job: JobRecord) -> JobRecord:
             f"{provider_id}: {payout.matches} match / {payout.mismatches} mismatch / {payout.unverifiable} unverifiable "
             f"-> {payout.outcome} ({payout.paid_usdc:.4f}/{payout.allocated_usdc:.4f} USDC)",
         )
+
+    escrow_contract.finalize(job.job_id)
 
     job.payouts = payouts
     job.total_paid_usdc = round(total_paid, 6)
