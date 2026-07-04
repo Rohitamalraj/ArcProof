@@ -28,6 +28,8 @@ type EthereumProvider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
   on: (event: string, handler: (...args: unknown[]) => void) => void;
   removeListener: (event: string, handler: (...args: unknown[]) => void) => void;
+  isMetaMask?: boolean;
+  providers?: EthereumProvider[];
 };
 
 declare global {
@@ -38,11 +40,33 @@ declare global {
 
 export class WalletError extends Error {}
 
+/**
+ * With more than one wallet extension installed (Coinbase Wallet, Rabby,
+ * Phantom, etc. alongside MetaMask), `window.ethereum` is ambiguous --
+ * extensions race to set it, so it can end up pointing at a different
+ * wallet than the one the user actually meant to use, or at a merged
+ * object whose .request() calls one extension's internals in a way that
+ * extension doesn't expect. That mismatch is what was throwing "Failed to
+ * connect to MetaMask" straight out of the MetaMask extension's own code
+ * with no application stack frames involved.
+ *
+ * Multi-wallet extensions commonly populate window.ethereum.providers
+ * with one entry per installed wallet (a pre-EIP-6963 convention several
+ * wallets still follow) -- prefer the entry explicitly flagged
+ * isMetaMask, so we always connect to the wallet this app is built
+ * against instead of whichever extension won the race to install itself
+ * as the default.
+ */
 export function getProvider(): EthereumProvider | null {
   if (typeof window === "undefined") {
     return null;
   }
-  return window.ethereum || null;
+  const eth = window.ethereum;
+  if (!eth) return null;
+  if (Array.isArray(eth.providers) && eth.providers.length > 0) {
+    return eth.providers.find((p) => p.isMetaMask) ?? eth.providers[0];
+  }
+  return eth;
 }
 
 export function hasInjectedWallet(): boolean {

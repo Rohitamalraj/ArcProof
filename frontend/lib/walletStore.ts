@@ -36,6 +36,17 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   error: "",
 
   connect: async () => {
+    // Defensive re-entrancy guard: MetaMask throws/rejects if
+    // eth_requestAccounts is called again while a previous call from the
+    // same origin hasn't resolved yet (surfaces as a generic "Failed to
+    // connect" from the extension itself). The button already disables
+    // itself while status === "connecting", but that's a UI-layer guard --
+    // this makes connect() itself safe to call twice in a row regardless
+    // of what triggers it (e.g. a click landing during a hydration-mismatch
+    // tree regeneration).
+    if (get().status === "connecting") {
+      return;
+    }
     set({ status: "connecting", error: "" });
     try {
       const address = await requestAccounts();
@@ -50,10 +61,20 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       set({ status: "connected", address, chainId, balanceUsdc, error: "" });
       get()._initListeners();
     } catch (error) {
-      set({
-        status: "disconnected",
-        error: error instanceof WalletError ? error.message : "Failed to connect wallet.",
-      });
+      // MetaMask (and other injected providers) throw plain Error-like
+      // objects with their own real message (e.g. "Already processing
+      // eth_requestAccounts", "User rejected the request") -- not just our
+      // WalletError class. Surface whatever message is actually there
+      // instead of collapsing every non-WalletError into one generic
+      // string, so the user (and anyone debugging a report like this one)
+      // can see what actually happened.
+      const message =
+        error instanceof WalletError
+          ? error.message
+          : error instanceof Error && error.message
+          ? error.message
+          : "Failed to connect wallet.";
+      set({ status: "disconnected", error: message });
     }
   },
 
