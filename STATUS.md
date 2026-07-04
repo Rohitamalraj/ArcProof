@@ -5,7 +5,7 @@ what's real vs. simulated, and what's left before this is a complete, connected
 product. See `README.md` for the pitch/architecture and `HACKATHON.md` for the
 original PRD/event context.
 
-Last updated: 2026-07-04 (post wallet-connect + on-chain-verified job flow).
+Last updated: 2026-07-04 (post Phase 3 SDK build).
 
 ## Done
 
@@ -14,9 +14,10 @@ Last updated: 2026-07-04 (post wallet-connect + on-chain-verified job flow).
 - Core decisions already made and should be treated as settled unless something
   concrete changes them: the evaluator's accept/mismatch/unverifiable decision
   must be deterministic code, not an LLM judgment call; every agent role should
-  be able to use a real Circle-managed wallet, not just one; the eventual SDK
-  extraction (Phase 3) is intentionally deferred until the working system is
-  proven and connected end to end.
+  be able to use a real Circle-managed wallet, not just one. Phase 3 (SDK
+  extraction) was deferred until the working system was proven end to end —
+  that happened, and Phase 3 is now built (see below); publishing it is the
+  one remaining step.
 
 ### `frontend/` — Next.js app, now connected to `agent-ts`
 - Marketing/landing page (unchanged) plus a real `/app`: job submission form
@@ -162,13 +163,99 @@ closed too:
 
 What's actually left:
 
-1. **Phase 3 (later, separate effort, not urgent)**: extract the reusable
-   core into an actual published SDK package, with a LangChain.js adapter and
-   an ElizaOS plugin. Deliberately not started — do this only after the
-   connected product has been used for real.
+1. ~~Phase 3: extract the reusable core into an actual published SDK
+   package~~ — **built, not yet published.** Three new packages under
+   `agent-ts/packages/`:
+   - `@arcproof/sdk` — the generalized trust layer. `claim_type` is a
+     plain string (not the reference app's fixed 7-value DeFi enum), a
+     `VerifierRegistry` replaces the hardcoded evaluator switch (register
+     your own deterministic verifier per claim_type — zero LLM calls,
+     same auditability principle, any domain), `escrow.ts`/`chain.ts`/
+     `circleWallet.ts` take a `WalletCredential` directly instead of a
+     fixed 6-role env-based lookup, and `runTrustedJob()` ties
+     lock → gather → verify → settle/refund into one call. The
+     `hasCheckableClaims` stuck-funds guard and the `waitForTransactionReceipt`
+     fix (see below) are both ported in from day one.
+   - `@arcproof/sdk-langchain` — wraps any LangChain.js tool-calling agent
+     as a `gatherClaims()` function. Carries forward both known
+     structured-output workarounds (Gemini's `anyOf`-union rejection,
+     Groq's boolean-as-string quirk) by convention from the start.
+     Also exports `createLangChainOrchestrator()` — the piece the first
+     SDK pass was missing: an LLM that decides *which* of several
+     registered specialists a specific request actually needs (ported
+     from the reference apps' `orchestrator.ts`/`langchainPlanner.ts`
+     `planSpecialists()`), so the full three-layer pattern (orchestrator
+     assigns specialists → specialists check and report → evaluator
+     independently verifies) is a first-class SDK capability, not
+     something every integrator re-derives themselves. No silent fallback
+     on a genuine planning failure — same "agent or refund" rule as
+     everywhere else; only a *successful-but-empty* plan defaults to
+     engaging every specialist.
+   - `@arcproof/sdk-elizaos` — a real ElizaOS `Action`/`Plugin`, built
+     against `@elizaos/core@1.7.2`'s actual type definitions. Deliberately
+     does *not* import types from `@elizaos/core` (that package's barrel
+     export has an internal `Action` name collision between `./types` and
+     `./actions` that TypeScript silently resolves by dropping the
+     ambiguous export) — uses structurally-identical local types instead,
+     which are assignment-compatible with the real ones. Its `gatherClaims`
+     accepts a full `createLangChainOrchestrator(...)` exactly like a single
+     specialist would — verified live (see `elizaos-demo.ts` below): same
+     orchestrator, same two specialists, same verifiers, invoked through a
+     real `ElizaAction.handler(...)` call instead of directly, real
+     transactions throughout, correct `ActionResult`. LangChain.js and
+     ElizaOS are two interchangeable wrappers around one identical trust
+     layer, not two different products — an integrator picks whichever
+     framework their product already uses.
+   - `examples/lending-apr-agent` — the proof this isn't DeFi-locked, and
+     that the orchestrator layer genuinely selects dynamically rather than
+     just running everything: **two** specialists
+     (`lending-apr-agent-v1` for true-APR/fees, `lending-eligibility-agent-v1`
+     for borrower-region eligibility — new claim types, a mock
+     lending-platform data source, nothing shared with the reference
+     app's vertical) sitting behind `createLangChainOrchestrator`.
+     Verified live: a pure APR question engages only the APR agent (real
+     contract deploy, real lock, real claims, real independent
+     recomputation, real payout, `ACCEPT`); a request that also asks about
+     eligibility engages both agents, each paid from its own share, verdict
+     still `ACCEPT` with the eligibility agent's `false` (ineligible-region)
+     claim independently confirmed as a genuine `match`, not a rubber
+     stamp. The safety-net path (an LLM failure produces zero checkable
+     claims → automatic refund, no stuck funds) is also proven live. The
+     catch-a-lie scenario is proven at the verifier-logic level (a
+     fabricated APR claim is correctly flagged `mismatch`, delta -20%) —
+     the live end-to-end run of that exact fault-injection prompt hit the
+     same free-tier Groq flakiness documented above (malformed
+     function-call generation, not a schema or SDK bug) repeatedly; the
+     mechanism is proven correct independent of that. Specialists/verifiers
+     live in `src/shared.ts`, imported unchanged by both `src/index.ts`
+     (LangChain.js orchestrator called directly) and `src/elizaos-demo.ts`
+     (the same orchestrator composed through a real ElizaAction) — the
+     point being that neither entrypoint reimplements the trust logic.
+   - **Found + fixed a real bug while building this**: `agent-ts/packages/core/src/escrowContract.ts`'s
+     Circle-wallet branches called `publicClient.getTransactionReceipt()`
+     (one-shot) instead of `waitForTransactionReceipt()` (polls) — Circle
+     confirming a tx hash exists doesn't guarantee the public RPC node has
+     indexed a receipt for it yet, so a genuinely successful release() was
+     spuriously throwing `TransactionReceiptNotFoundError` and failing the
+     whole job. Fixed in all 4 functions (lock/release/finalize/refund),
+     verified with a real job that failed before the fix and succeeded
+     cleanly after it. The SDK's own `escrow.ts` was written with this fix
+     from the start.
+   - **Not done yet**: actually publishing to the public npm registry.
+     All three packages pass `npm publish --dry-run` cleanly (correct
+     files, correct metadata) and the `@arcproof` scope is unclaimed
+     (`registry.npmjs.org/@arcproof/sdk` → 404), but the publish itself
+     needs whoever owns/creates the `@arcproof` npm account or
+     organization to run `npm login` then `npm publish` per package
+     (`sdk` first, then `sdk-langchain`/`sdk-elizaos`) from inside each
+     package directory — not something to do without the account owner
+     present.
 
 ## Where to look for more detail
 
+- `agent-ts/packages/sdk/README.md`, `sdk-langchain/README.md`,
+  `sdk-elizaos/README.md` — SDK usage, API surface, Circle Wallets setup.
+- `agent-ts/examples/lending-apr-agent/README.md` — the non-DeFi worked example.
 - `agent-ts/README.md` — architecture, exact verification/tolerance rules,
   Circle Wallets setup, running instructions, project layout.
 - `agent/README.md` — same, for the Python reference implementation.
