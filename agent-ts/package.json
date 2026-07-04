@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "description": "TypeScript port of the ArcProof/VeriFi Agents backend -- real Arc testnet payments, real LangChain.js agents, deterministic evaluator.",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "examples/*"
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
