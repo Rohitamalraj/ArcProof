@@ -124,7 +124,16 @@ export async function lock(jobId: string, requesterRole: Role, amountUsdc: numbe
       [jobIdHex],
       amountUsdc
     );
-    const receipt = await publicClient.getTransactionReceipt({ hash: circleResult.txHash as Hash });
+    // Circle's waitForTxHash only guarantees Circle's own systems have
+    // broadcast the tx and know its hash -- it does NOT guarantee the
+    // public Arc RPC node has indexed a receipt for it yet. A plain
+    // getTransactionReceipt() here raced ahead of that propagation delay
+    // and threw TransactionReceiptNotFoundError on a transaction that had
+    // genuinely succeeded, which failed the whole job and refunded a
+    // legitimate payout. waitForTransactionReceipt polls instead of
+    // one-shot failing, matching what the non-Circle branch below already
+    // does correctly.
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: circleResult.txHash as Hash, timeout: 90_000 });
     const result: ContractTx = {
       txHash: circleResult.txHash,
       blockNumber: Number(receipt.blockNumber),
@@ -160,7 +169,16 @@ export async function release(
       "release(bytes32,address,uint256,string)",
       [jobIdHex, providerAddress, amountWei.toString(), outcome]
     );
-    const receipt = await publicClient.getTransactionReceipt({ hash: circleResult.txHash as Hash });
+    // Circle's waitForTxHash only guarantees Circle's own systems have
+    // broadcast the tx and know its hash -- it does NOT guarantee the
+    // public Arc RPC node has indexed a receipt for it yet. A plain
+    // getTransactionReceipt() here raced ahead of that propagation delay
+    // and threw TransactionReceiptNotFoundError on a transaction that had
+    // genuinely succeeded, which failed the whole job and refunded a
+    // legitimate payout. waitForTransactionReceipt polls instead of
+    // one-shot failing, matching what the non-Circle branch below already
+    // does correctly.
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: circleResult.txHash as Hash, timeout: 90_000 });
     result = { txHash: circleResult.txHash, blockNumber: Number(receipt.blockNumber), explorerUrl: circleResult.explorerUrl };
   } else {
     result = await sendContractCall("orchestrator", "release", [jobIdToBytes32(jobId), providerAddress, amountWei, outcome]);
@@ -175,7 +193,16 @@ export async function finalize(jobId: string): Promise<ContractTx> {
   let result: ContractTx;
   if (circleEntry) {
     const circleResult = await circleWallet.executeContract(circleEntry.walletId, contractAddress(), "finalize(bytes32)", [jobIdToBytes32(jobId)]);
-    const receipt = await publicClient.getTransactionReceipt({ hash: circleResult.txHash as Hash });
+    // Circle's waitForTxHash only guarantees Circle's own systems have
+    // broadcast the tx and know its hash -- it does NOT guarantee the
+    // public Arc RPC node has indexed a receipt for it yet. A plain
+    // getTransactionReceipt() here raced ahead of that propagation delay
+    // and threw TransactionReceiptNotFoundError on a transaction that had
+    // genuinely succeeded, which failed the whole job and refunded a
+    // legitimate payout. waitForTransactionReceipt polls instead of
+    // one-shot failing, matching what the non-Circle branch below already
+    // does correctly.
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: circleResult.txHash as Hash, timeout: 90_000 });
     result = { txHash: circleResult.txHash, blockNumber: Number(receipt.blockNumber), explorerUrl: circleResult.explorerUrl };
   } else {
     result = await sendContractCall("orchestrator", "finalize", [jobIdToBytes32(jobId)]);
@@ -190,7 +217,16 @@ export async function refund(jobId: string): Promise<ContractTx> {
   let result: ContractTx;
   if (circleEntry) {
     const circleResult = await circleWallet.executeContract(circleEntry.walletId, contractAddress(), "refund(bytes32)", [jobIdToBytes32(jobId)]);
-    const receipt = await publicClient.getTransactionReceipt({ hash: circleResult.txHash as Hash });
+    // Circle's waitForTxHash only guarantees Circle's own systems have
+    // broadcast the tx and know its hash -- it does NOT guarantee the
+    // public Arc RPC node has indexed a receipt for it yet. A plain
+    // getTransactionReceipt() here raced ahead of that propagation delay
+    // and threw TransactionReceiptNotFoundError on a transaction that had
+    // genuinely succeeded, which failed the whole job and refunded a
+    // legitimate payout. waitForTransactionReceipt polls instead of
+    // one-shot failing, matching what the non-Circle branch below already
+    // does correctly.
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: circleResult.txHash as Hash, timeout: 90_000 });
     result = { txHash: circleResult.txHash, blockNumber: Number(receipt.blockNumber), explorerUrl: circleResult.explorerUrl };
   } else {
     result = await sendContractCall("orchestrator", "refund", [jobIdToBytes32(jobId)]);
