@@ -1,0 +1,20 @@
+{
+  "name": "arcproof-agent-ts",
+  "private": true,
+  "version": "0.1.0",
+  "description": "TypeScript port of the ArcProof/VeriFi Agents backend -- real Arc testnet payments, real LangChain.js agents, deterministic evaluator.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "demo": "npm run demo --workspace=@arcproof/services",
+    "gen-wallets": "npx tsx scripts/generate-wallets.ts",
+    "deploy-contract": "npx tsx packages/contracts/deploy.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.5"
+  }
+}

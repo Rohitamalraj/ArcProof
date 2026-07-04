@@ -1,0 +1,19 @@
+{
+  "name": "@arcproof/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "deploy": "tsx deploy.ts"
+  },
+  "dependencies": {
+    "@arcproof/core": "*",
+    "viem": "^2.21.54"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.5"
+  }
+}
