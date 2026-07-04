@@ -52,6 +52,7 @@ class JobRequest(BaseModel):
     budget_usdc: float = Field(gt=0)
     protocol_slug: str  # e.g. "aave", "lido" -- DefiLlama slug, also used for price/governance lookups
     requester_wallet: str = "requester"
+    payment_tx_hash: Optional[str] = None  # real on-chain tx moving budget_usdc requester -> escrow; set by a connected browser wallet, verified independently rather than trusted
     target_address: Optional[str] = None  # wallet checked by the compliance agent; defaults to a clean demo address
     inject_fault: Optional[Literal["onchain", "news", "compliance"]] = None  # demo-only: force a specialist to fabricate a claim
 

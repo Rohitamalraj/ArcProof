@@ -19,4 +19,6 @@ langchain-anthropic>=1.4.8
 # Installed for the documented upgrade path (see payments/x402.py docstring)
 # -- not imported by the current on-chain-transfer-based x402 flow.
 x402[fastapi,httpx,evm]>=2.14.0
+# Optional: Circle-managed custody path (not required for current demo flow).
+# On Windows, if wheel build fails due path length, set TEMP/TMP to a short path (e.g. C:/t) before pip install.
 circle-developer-controlled-wallets>=9.6.0

@@ -42,6 +42,17 @@ def transfer(from_role: str, to_role: str, amount: float, memo: str = "") -> OnC
     return chain_transfer(from_wallet["private_key"], to_wallet["address"], amount, memo=memo)
 
 
+def transfer_to_address(from_role: str, to_address: str, amount: float, memo: str = "") -> OnChainTransfer:
+    """Same as transfer(), but for paying an arbitrary real address (e.g. a
+    connected browser wallet) rather than another known role -- refunding a
+    real requester wallet isn't a role-to-role move, so it can't go through
+    `transfer()`'s role lookup on the recipient side."""
+    from_wallet = _wallet(from_role)
+    if not from_wallet.get("private_key"):
+        raise ValueError(f"no private key configured for role '{from_role}' -- check .env")
+    return chain_transfer(from_wallet["private_key"], to_address, amount, memo=memo)
+
+
 def refund_or_hold(role: str, amount: float, memo: str = "") -> None:
     """Withheld funds simply stay put in the role's own wallet -- there's no
     separate 'hold' action on a real chain. Exists so settlement code reads
@@ -56,6 +67,7 @@ class _Ledger:
     balance = staticmethod(balance)
     all_balances = staticmethod(all_balances)
     transfer = staticmethod(transfer)
+    transfer_to_address = staticmethod(transfer_to_address)
     refund_or_hold = staticmethod(refund_or_hold)
     role_address = staticmethod(role_address)
 

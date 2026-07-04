@@ -15,22 +15,34 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from shared.schema import JobRequest, JobRecord, Claim
 from shared.console import log, rule
 from shared.config import (
     ORCHESTRATOR_PORT, ONCHAIN_AGENT_URL, NEWS_AGENT_URL, COMPLIANCE_AGENT_URL,
     EVALUATOR_URL, WALLETS, ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY,
+    ARC_CHAIN_ID, ARC_RPC_URL, ARC_EXPLORER_URL, NANOPAYMENT_USDC, FRONTEND_ORIGIN,
 )
 from payments.x402 import x402_post
-from payments.wallet import ledger
+from payments.wallet import ledger, transfer_to_address
+from payments import chain
 from storage.store import job_store, reputation_store
 from settlement.escrow import settle
 from agents import langchain_planner
 
 app = FastAPI(title="VeriFi Orchestrator")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[FRONTEND_ORIGIN] if FRONTEND_ORIGIN != "*" else ["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
 ORCHESTRATOR_PRIVATE_KEY = WALLETS["orchestrator"]["private_key"]
+ESCROW_ADDRESS = WALLETS["escrow"]["address"]
 
 SPECIALIST_URLS: dict[str, str] = {
     "onchain-agent-v1": ONCHAIN_AGENT_URL,
@@ -119,12 +131,32 @@ async def create_job(job_req: JobRequest):
         created_at=datetime.now(timezone.utc).isoformat(),
     )
 
-    try:
-        ledger.transfer(job_req.requester_wallet, "escrow", job_req.budget_usdc, memo=f"job {job_id}: lock budget")
-    except Exception as e:
-        job.status = "failed"
-        job_store.save(job)
-        raise HTTPException(status_code=402, detail=f"could not lock budget in escrow: {e}")
+    if job_req.payment_tx_hash:
+        # Real connected-wallet path: the requester already broadcast a real
+        # transfer to escrow themselves. Don't trust the claim -- re-derive
+        # it from the chain, same principle as payments/x402.py's
+        # verify_transfer use for specialist nanopayments.
+        verified = chain.verify_transfer(
+            job_req.payment_tx_hash,
+            expected_from=job_req.requester_wallet,
+            expected_to=ESCROW_ADDRESS,
+            min_amount_usdc=job_req.budget_usdc,
+        )
+        if not verified:
+            job.status = "failed"
+            job_store.save(job)
+            raise HTTPException(status_code=402, detail=f"payment tx {job_req.payment_tx_hash} could not be verified on-chain")
+        log("orchestrator", f"budget verified on-chain: {job_req.requester_wallet[:10]}.. -> escrow (tx {job_req.payment_tx_hash})")
+    else:
+        # Fallback path used by cli/run_demo.py and other backend-internal
+        # callers that don't have a real connected wallet -- signs the
+        # transfer with the fixed 'requester' role wallet from .env.
+        try:
+            ledger.transfer(job_req.requester_wallet, "escrow", job_req.budget_usdc, memo=f"job {job_id}: lock budget")
+        except Exception as e:
+            job.status = "failed"
+            job_store.save(job)
+            raise HTTPException(status_code=402, detail=f"could not lock budget in escrow: {e}")
 
     try:
         specialists = await decompose(job_req)
@@ -167,7 +199,12 @@ async def create_job(job_req: JobRequest):
         log("orchestrator", f"job {job_id} failed after budget lock: {e} -- refunding escrow -> requester", style="bold red")
         job.status = "failed"
         try:
-            ledger.transfer("escrow", job_req.requester_wallet, job_req.budget_usdc, memo=f"job {job_id}: refund after failure")
+            if job_req.payment_tx_hash:
+                # Real connected wallet -- refund straight to that address,
+                # not through the role lookup `ledger.transfer` uses.
+                transfer_to_address("escrow", job_req.requester_wallet, job_req.budget_usdc, memo=f"job {job_id}: refund after failure")
+            else:
+                ledger.transfer("escrow", job_req.requester_wallet, job_req.budget_usdc, memo=f"job {job_id}: refund after failure")
         except Exception as refund_error:
             log("orchestrator", f"  ! refund ALSO failed: {refund_error} -- funds remain in escrow, job marked failed", style="bold red")
         job_store.save(job)
@@ -195,6 +232,17 @@ async def get_reputation():
 @app.get("/wallets")
 async def get_wallets():
     return ledger.all_balances()
+
+
+@app.get("/config")
+async def get_config():
+    return {
+        "arc_chain_id": ARC_CHAIN_ID,
+        "arc_rpc_url": ARC_RPC_URL,
+        "arc_explorer_url": ARC_EXPLORER_URL,
+        "escrow_address": ESCROW_ADDRESS,
+        "nanopayment_usdc": NANOPAYMENT_USDC,
+    }
 
 
 if __name__ == "__main__":
