@@ -1,7 +1,7 @@
 {
   "name": "@arcproof/sdk-elizaos",
-  "version": "0.1.0",
-  "description": "ElizaOS plugin for @arcproof/sdk -- expose a bonded, independently-verified, real-payment action inside an ElizaOS agent.",
+  "version": "0.2.0",
+  "description": "ElizaOS plugin for @arcproof/sdk -- native orchestrator + specialist builders (runtime.useModel, no LangChain needed) plus the Action/Plugin wrapper, for a bonded, independently-verified, real-payment agent.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

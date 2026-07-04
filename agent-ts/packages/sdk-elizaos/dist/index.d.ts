@@ -1,4 +1,5 @@
 import { type TrustedAgentConfig, type SettlementResult, type Claim, type WalletCredential } from "@arcproof/sdk";
+export * from "./elizaAgent.js";
 export interface ElizaContent {
     text?: string;
     [key: string]: unknown;

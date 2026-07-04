@@ -102,6 +102,11 @@ A plain string field with an explicit `"true"`/`"false"` convention, coerced bac
 
 If the underlying LLM call fails (quota, outage, malformed generation), `createLangChainClaimGatherer` logs and returns zero claims rather than throwing. `runTrustedJob`'s built-in `hasCheckableClaims` guard already handles "this provider contributed nothing" correctly (refund, not a false accept) -- a single flaky provider never has to crash the whole job.
 
+## Worked examples (real, verified live)
+
+- [`examples/defi-diligence-agent`](../../examples/defi-diligence-agent) -- the original DeFi treasury-diligence vertical: the real `onchain-agent-v1`/`news-agent-v1`/`compliance-agent-v1` specialists behind `createLangChainOrchestrator`. Proven live including a fabricated-TVL claim caught as `mismatch` → `PARTIAL` payout.
+- [`examples/lending-apr-agent`](../../examples/lending-apr-agent) -- a completely different vertical (lending true-APR + eligibility), proving the SDK isn't tied to DeFi.
+
 ## License
 
 MIT

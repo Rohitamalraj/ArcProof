@@ -28,6 +28,8 @@
  */
 import { randomUUID } from "node:crypto";
 import { runTrustedJob } from "@arcproof/sdk";
+import { ELIZA_RUNTIME_CONTEXT_KEY } from "./elizaAgent.js";
+export * from "./elizaAgent.js";
 function defaultFormatResponse(result) {
     const lines = [`Verdict: ${result.overall_verdict.toUpperCase()} (paid ${result.total_paid_usdc.toFixed(4)})`, ""];
     for (const c of result.claims) {
@@ -49,9 +51,13 @@ export function createArcProofAction(options) {
         similes: options.similes ?? [],
         examples: options.examples ?? [],
         validate: options.validate ?? (async () => true),
-        handler: async (_runtime, message, state, _handlerOptions, callback) => {
+        handler: async (runtime, message, state, _handlerOptions, callback) => {
             const jobId = randomUUID();
-            const context = { jobId, ...options.buildContext(message, state) };
+            // Inject the ElizaOS runtime into the job context so native
+            // createEliza* gatherers can reach runtime.useModel without changing
+            // the framework-agnostic gatherClaims(context) signature. A LangChain
+            // gatherer simply ignores this key; an ElizaOS-native one reads it.
+            const context = { jobId, [ELIZA_RUNTIME_CONTEXT_KEY]: runtime, ...options.buildContext(message, state) };
             try {
                 const params = {
                     jobId,

@@ -197,10 +197,26 @@ What's actually left:
      export has an internal `Action` name collision between `./types` and
      `./actions` that TypeScript silently resolves by dropping the
      ambiguous export) — uses structurally-identical local types instead,
-     which are assignment-compatible with the real ones. Its `gatherClaims`
-     accepts a full `createLangChainOrchestrator(...)` exactly like a single
-     specialist would — verified live (see `elizaos-demo.ts` below): same
-     orchestrator, same two specialists, same verifiers, invoked through a
+     which are assignment-compatible with the real ones.
+     **A genuine STANDALONE alternative to `sdk-langchain`, not an add-on:**
+     ships its own native `createElizaOrchestrator` + `createElizaClaimGatherer`
+     that run entirely on ElizaOS's own `runtime.useModel(ModelType.OBJECT_LARGE,
+     …)` — zero LangChain dependency — so `sdk` + `sdk-elizaos` alone gives the
+     full orchestrator → specialists → evaluator pipeline. `createArcProofAction`
+     injects the ElizaOS `runtime` into the job context so the native gatherers
+     reach `useModel` without changing the framework-agnostic
+     `gatherClaims(context)` signature. Design choice: a native specialist runs
+     all its declared tools then makes one structured-output `useModel` call to
+     draft claims (deterministic tool invocation, LLM claim drafting) — more
+     reliable than parsing multi-turn tool-call JSON out of plain `useModel`, and
+     for these specialists the tool choice is trivial anyway. Verified live,
+     standalone (`examples/defi-diligence-agent/src/elizaos-native.ts`, sdk +
+     sdk-elizaos only): orchestrator plan → `onchain-agent-v1`/`news-agent-v1`
+     specialists → deterministic verification against live DefiLlama/CoinGecko/
+     Snapshot data (all matched) → real per-specialist payout, `ACCEPT`, real
+     transactions. It *also* still accepts a `createLangChainOrchestrator(...)`
+     as its `gatherClaims` if you already have LangChain specialists —
+     verified live (see `elizaos-demo.ts` below): same
      real `ElizaAction.handler(...)` call instead of directly, real
      transactions throughout, correct `ActionResult`. LangChain.js and
      ElizaOS are two interchangeable wrappers around one identical trust
@@ -231,6 +247,28 @@ What's actually left:
      (LangChain.js orchestrator called directly) and `src/elizaos-demo.ts`
      (the same orchestrator composed through a real ElizaAction) — the
      point being that neither entrypoint reimplements the trust logic.
+   - `examples/defi-diligence-agent` — the companion proof: the SDK also
+     drives the **original** DeFi treasury-diligence vertical, using the
+     exact same `onchain-agent-v1`/`news-agent-v1`/`compliance-agent-v1`
+     specialists as the reference apps (same tools, same system prompts,
+     same 7 claim types, same ±5% / boolean / governance-substring /
+     news-corroboration verification rules), reusing `@arcproof/core`'s
+     `dataSources` directly so the live data (DefiLlama/CoinGecko/Snapshot/
+     GDELT/OFAC) is literally identical — only the plumbing changed (one
+     process through `VerifierRegistry` + `runTrustedJob` instead of 5
+     Fastify services + a fixed `evaluator.ts` switch). Verified live with
+     real transactions on **both** adapters: clean 3-specialist `ACCEPT`
+     with real per-specialist payout; a fabricated TVL (1.5x real, delta
+     50%) correctly caught as `mismatch` while the same specialist's 3
+     honest claims still matched → payout cut to 50% → `PARTIAL` (the full
+     catch-a-lie scene end to end, which the lending example couldn't
+     complete live due to Groq flakiness); the refund safety-net (every
+     specialist's LLM call failed on quota → zero checkable claims →
+     automatic on-chain refund of the full locked budget); and ElizaOS
+     parity through a real `ElizaAction.handler`. Together with
+     lending-apr-agent this is the concrete proof the SDK is
+     vertical-agnostic — two unrelated domains, zero changes to
+     `@arcproof/sdk` itself.
    - **Found + fixed a real bug while building this**: `agent-ts/packages/core/src/escrowContract.ts`'s
      Circle-wallet branches called `publicClient.getTransactionReceipt()`
      (one-shot) instead of `waitForTransactionReceipt()` (polls) — Circle
