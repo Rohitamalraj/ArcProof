@@ -24,7 +24,20 @@ export function WalletConnectButton() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showManual, setShowManual] = useState(false);
+  // hasInjectedWallet() depends on `window`, which doesn't exist during SSR --
+  // calling it directly in the render body means the server always renders
+  // "Install Wallet" while the client's first paint (browser extensions
+  // inject window.ethereum before React even runs) can immediately see
+  // "Connect Wallet" instead, a text mismatch React's hydration diff catches
+  // and reports. Deferring the real check to an effect keeps the first
+  // client render identical to the server's, then updates after mount --
+  // no mismatch, just a one-frame flash of the SSR-safe default.
+  const [walletDetected, setWalletDetected] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setWalletDetected(hasInjectedWallet());
+  }, []);
 
   useEffect(() => {
     function onClickAway(e: MouseEvent) {
@@ -133,11 +146,7 @@ export function WalletConnectButton() {
         className="inline-flex items-center gap-2 rounded-full border border-violet-700/60 bg-violet-950/50 px-3 py-1.5 text-xs font-medium text-violet-200 backdrop-blur-md transition hover:bg-violet-900/60 disabled:cursor-wait disabled:opacity-70"
       >
         <span className="h-2 w-2 rounded-full bg-violet-400" />
-        {status === "connecting"
-          ? "Connecting..."
-          : hasInjectedWallet()
-          ? "Connect Wallet"
-          : "Install Wallet"}
+        {status === "connecting" ? "Connecting..." : walletDetected ? "Connect Wallet" : "Install Wallet"}
       </button>
       {error ? <span className="max-w-[220px] text-right text-[10px] text-red-400">{error}</span> : null}
     </div>
