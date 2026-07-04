@@ -1,0 +1,28 @@
+{
+  "name": "@arcproof/example-lending-apr-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Worked example proving @arcproof/sdk isn't DeFi-specific: a lending-platform 'true APR' diligence agent, a completely different vertical from the treasury-diligence reference app.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@arcproof/sdk": "*",
+    "@arcproof/sdk-langchain": "*",
+    "@langchain/core": "^0.3.30",
+    "@langchain/groq": "^0.1.3",
+    "@langchain/google-genai": "^0.1.7",
+    "@langchain/anthropic": "^0.3.11",
+    "@langchain/openai": "^0.3.17",
+    "dotenv": "^16.4.7",
+    "viem": "^2.21.54",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.5"
+  }
+}

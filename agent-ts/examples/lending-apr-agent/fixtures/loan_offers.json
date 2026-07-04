@@ -1,0 +1,29 @@
+{
+  "source": "https://example-lending-platform.test/api/loans (mock fixture standing in for a real lending platform's own records -- the point of this example is that the SDK doesn't care where the data comes from)",
+  "loans": {
+    "loan-001": {
+      "principal_usdc": 10000,
+      "stated_apr_pct": 7.5,
+      "processing_fee_usdc": 150,
+      "documentation_charge_usdc": 45,
+      "borrower_region": "US-CA",
+      "eligible_regions": ["US-CA", "US-NY", "US-TX"]
+    },
+    "loan-002": {
+      "principal_usdc": 25000,
+      "stated_apr_pct": 5.9,
+      "processing_fee_usdc": 300,
+      "documentation_charge_usdc": 75,
+      "borrower_region": "US-NY",
+      "eligible_regions": ["US-CA", "US-NY", "US-TX"]
+    },
+    "loan-003": {
+      "principal_usdc": 5000,
+      "stated_apr_pct": 9.9,
+      "processing_fee_usdc": 40,
+      "documentation_charge_usdc": 15,
+      "borrower_region": "US-FL",
+      "eligible_regions": ["US-CA", "US-NY", "US-TX"]
+    }
+  }
+}
