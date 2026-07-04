@@ -1,0 +1,46 @@
+{
+  "name": "@arcproof/sdk",
+  "version": "0.1.0",
+  "description": "Trust layer for AI agents: make a claim, independently verify it against live data, release real on-chain payment only if it checks out. Bring your own agent (any framework) -- this is the verify+pay primitive, not a fixed agent roster.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "contracts/VeriFiEscrow.json",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "arc",
+    "circle",
+    "x402",
+    "ai-agents",
+    "verification",
+    "escrow",
+    "web3",
+    "usdc"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "viem": "^2.21.54",
+    "zod": "^3.24.1",
+    "@circle-fin/developer-controlled-wallets": "^10.8.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "@types/node": "^22.10.5"
+  }
+}
