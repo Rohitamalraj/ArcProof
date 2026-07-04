@@ -37,7 +37,14 @@ export async function runSpecialistAnalysis(
   }
 
   const claims: Claim[] = drafts.map((d) => {
-    console.log(`[${agentId}]   ${d.claim_type} claim: ${d.claim_text} (simulated=${d.simulated})`);
+    // d.simulated is the model's literal "true"/"false" string (see
+    // agentSchemas.ts) -- coerce back to a real boolean here since the
+    // wire-format Claim.simulated is a genuine z.boolean(). Anything other
+    // than the exact string "true" defaults to false (matching the
+    // schema's own default and the "simulated only if explicitly true"
+    // instruction given to the model).
+    const simulated = d.simulated.toLowerCase() === "true";
+    console.log(`[${agentId}]   ${d.claim_type} claim: ${d.claim_text} (simulated=${simulated})`);
     return {
       claim_id: randomUUID(),
       job_id: jobId,
@@ -46,7 +53,7 @@ export async function runSpecialistAnalysis(
       claim_text: d.claim_text,
       claim_value: d.claim_value,
       provider_source: d.provider_source,
-      simulated: d.simulated,
+      simulated,
       verification_status: "pending",
     };
   });
