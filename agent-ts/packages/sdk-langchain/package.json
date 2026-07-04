@@ -1,0 +1,37 @@
+{
+  "name": "@arcproof/sdk-langchain",
+  "version": "0.1.0",
+  "description": "LangChain.js adapter for @arcproof/sdk -- turn any LangChain.js tool-calling agent into a claim-gathering step for the ArcProof trust layer.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["arcproof", "langchain", "ai-agents", "verification"],
+  "license": "MIT",
+  "peerDependencies": {
+    "@arcproof/sdk": "^0.1.0",
+    "@langchain/core": "^0.3.30",
+    "@langchain/langgraph": "^0.2.41"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@arcproof/sdk": "*",
+    "@langchain/core": "^0.3.30",
+    "@langchain/langgraph": "^0.2.41",
+    "typescript": "^5.7.3",
+    "@types/node": "^22.10.5"
+  }
+}
