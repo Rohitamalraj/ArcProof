@@ -5,7 +5,7 @@ what's real vs. simulated, and what's left before this is a complete, connected
 product. See `README.md` for the pitch/architecture and `HACKATHON.md` for the
 original PRD/event context.
 
-Last updated: 2026-07-04.
+Last updated: 2026-07-04 (post wallet-connect + on-chain-verified job flow).
 
 ## Done
 
@@ -18,35 +18,80 @@ Last updated: 2026-07-04.
   extraction (Phase 3) is intentionally deferred until the working system is
   proven and connected end to end.
 
-### `frontend/` — Next.js landing page
-- Full marketing/landing page built, themed off the MetaMask/COMPUTE reference
-  template (fonts, animations, backgrounds, real hosted assets).
-- Builds clean, pushed to GitHub.
-- **Not done**: `/app` is a placeholder. No job-submission form, no per-claim
-  results view, no reputation dashboard UI. Not connected to any backend.
+### `frontend/` — Next.js app, now connected to `agent-ts`
+- Marketing/landing page (unchanged) plus a real `/app`: job submission form
+  (request text, protocol slug, budget, optional template label, optional
+  compliance target address with a one-click real OFAC demo address, optional
+  fault injection), a live wallet-balance strip (`GET /wallets`), a results
+  view (memo + per-claim match/mismatch/unverifiable table + per-specialist
+  payout outcome), job history, a job permalink page (`/jobs/[id]`), and a
+  reputation dashboard (`/reputation`). Wired to all 5 orchestrator endpoints.
+- Fixed a real Turbopack workspace-root misdetection bug along the way (a
+  stray `pnpm-lock.yaml` in the home directory made Next resolve
+  `frontend/node_modules` from the wrong place) — pinned via
+  `turbopack.root` in `next.config.ts`.
+- **Real wallet-connect, linked to a real on-chain payment, not decorative.**
+  `WalletConnectButton` connects an injected browser wallet (MetaMask etc.),
+  adds/switches to Arc Testnet, shows live balance (`lib/wallet.ts`,
+  `lib/walletStore.ts`, both real `viem`-backed calls). Submitting a job now
+  requires a connected wallet: the frontend generates a `job_id` client-side
+  and calls `VeriFiEscrow.lock(bytes32)` **directly from the connected
+  wallet** (a real signed contract transaction, budget attached as native
+  value) before ever hitting the orchestrator.
+- Backend changed to make that real: `agent-ts`'s `JobRequestSchema` now
+  accepts an optional `job_id`/`payment_tx_hash`; when present, the
+  orchestrator independently re-reads the contract's on-chain state
+  (`escrowContract.getJob()`) to verify the lock (status/requester/amount)
+  instead of trusting the claim or locking the budget itself. New
+  `GET /config` endpoint gives the frontend the real deployed escrow
+  contract address instead of hardcoding it.
+- Verified for real via the exact browser-wallet code path (a script that
+  locks through `viem` the same way the frontend does, then posts
+  `job_id`+`payment_tx_hash`): a real, unscripted `rejected` verdict with a
+  real partial payout, and confirmed the orchestrator correctly skips its
+  own `lock()` call instead of double-locking.
 
-### `agent/` — Python backend (reference implementation)
-- Built by a teammate. Real 5-service system (orchestrator, 3 specialists,
-  evaluator), real Arc testnet payments, a deployed `VeriFiEscrow` contract.
-- Known gaps, not yet fixed here: the evaluator is LLM-judgment based (not
-  deterministic), and Circle Wallets are only wired for the `requester` role,
-  off by default and undocumented.
-- Not modified this round — kept as-is.
+### `agent/` — Python backend (reference implementation, ARCHIVED)
+- Built by a teammate. Real 5-service system, real Arc testnet payments, a
+  deployed `VeriFiEscrow` contract.
+- Marked archived/reference-only at the top of `agent/README.md`. Not
+  modified this round beyond that notice — don't build new features here.
 
 ### `agent-ts/` — TypeScript backend (primary, working implementation)
 - Full parallel port of the same 5-service architecture, framework-agnostic
-  core package + Fastify services, real Arc testnet contract (freshly
-  deployed), real funded wallets, real LangChain.js agents.
-- Both corrective fixes are in and proven: the evaluator (`core/src/evaluator.ts`)
-  is deterministic code with zero LLM calls; Circle Wallets support is wired
-  for every role (code ready, not yet switched on — see below).
-- **All three job outcomes proven live with real transactions**: a clean
-  accept (real TVL/price matches), a safe refund-on-failure (proven repeatedly
-  under real provider outages), and a full reject (a real injected compliance
-  lie caught by the evaluator, plus an unplanned bonus: an organic LLM
-  hallucination on a different specialist also caught) — with correct
-  per-specialist payout splits and reputation divergence.
-- Committed and pushed in 3 commits: core+contracts, services, docs/scripts.
+  core package + Fastify services, real Arc testnet contract, real LangChain.js
+  agents, deterministic evaluator (zero LLM calls in the verdict itself).
+- **Circle Developer-Controlled Wallets are fully live, not just wired**: real
+  entity secret generated + registered with Circle, a real wallet set + one
+  real Circle-managed wallet per role (`requester`, `orchestrator`, all 3
+  specialists) provisioned and funded (20 USDC each via Circle's own
+  authenticated faucet API, `client.requestTestnetTokens`). The deployed
+  contract's `settler` was updated on-chain (`setSettler`, owner-only, called
+  from the `escrow` role) to the new Circle-managed orchestrator address —
+  needed because `release()`/`finalize()`/`refund()` now sign through Circle
+  for that role and the contract only lets `settler` call them.
+- **Basic hardening added and verified at runtime**: per-IP rate limiting
+  (`@fastify/rate-limit`, 60 req/min) on all 5 services, CORS
+  (`@fastify/cors`) on the orchestrator, and an optional shared-secret
+  `X-Api-Key` check on `POST /jobs` (unset by default, zero config for local
+  use). Caught and fixed a real bug while verifying this: registering
+  Fastify plugins without `await` looked fine but the rate-limit hook never
+  actually fired once all 5 services boot concurrently via
+  `cli/runDemo.ts`'s `Promise.all` — fixed by awaiting registration before
+  routes are defined.
+- **Fixed the zero-claims-stuck-in-escrow bug** (see "Known issues" below,
+  now resolved): `settlement.ts` exports `hasCheckableClaims()`; the
+  orchestrator refunds instead of settling when a job produces none.
+- **Fixed a real dotenv/CWD bug**: `npm run <script> --workspace=<pkg>`
+  changes cwd to that package's directory, which silently loaded zero env
+  vars via the old CWD-relative `import "dotenv/config"` (every wallet
+  balance came back empty, no error). `config.ts` now loads `.env` from an
+  explicit path resolved from the module's own location, so it works
+  regardless of how a script is invoked.
+- **All job outcomes proven live with real transactions** through the full
+  updated stack (Circle wallets + hardening + frontend), most recently a
+  clean accept with real TVL/price matches and a real per-specialist
+  settlement release.
 
 ## Known issues / lessons learned
 
@@ -57,13 +102,30 @@ Last updated: 2026-07-04.
   now checks providers in this order: Groq → OpenRouter → Gemini →
   Anthropic → OpenAI. If Groq's limits ever become a problem, the same pattern
   (add a provider branch in `getModel()`) is how to add another one.
-- **Zero-claims jobs get stuck money.** If every specialist fails to produce
-  any claims (e.g. a provider outage), the job still gets marked `accept` (per
-  the rule "0 mismatches = accept") and the requester's locked budget stays
-  withheld in the escrow contract forever — it's never automatically refunded,
-  because the job didn't technically fail, it just produced nothing. This is a
-  real bug worth fixing (e.g.: treat zero checkable claims as its own case that
-  triggers a refund, not an auto-accept).
+- **Zero-claims jobs got stuck money — FIXED.** If every specialist failed to
+  produce any claims (e.g. a provider outage), the job used to still get
+  marked `accept` (per the rule "0 mismatches = accept") and the requester's
+  locked budget stayed withheld in the escrow contract forever, since the job
+  never technically failed, it just produced nothing. `settlement.ts` now
+  exports `hasCheckableClaims()`; the orchestrator throws (triggering the
+  existing refund path) instead of calling `settle()` when this is false.
+- **Turning on a role's Circle wallet can silently break contract calls that
+  role makes as `msg.sender`.** The deployed `VeriFiEscrow`'s `settler` is
+  fixed to whatever address was passed at deploy time. If you later give the
+  `orchestrator` role a Circle-managed wallet, `release()`/`finalize()`/
+  `refund()` start signing from that *new* address, which the contract will
+  reject (`"not settler"`) until you call `setSettler()` (owner-only, i.e.
+  the `escrow` role) to update it on-chain. Same principle applies to any
+  future role whose Circle wallet needs on-chain permission the contract
+  granted to a specific plain address at deploy time.
+- **Balance displays only ever read the plain eth_account wallets — FIXED.**
+  `cli/runDemo.ts`'s `checkRealBalances()` and the orchestrator's
+  `GET /wallets` both called `wallet.ledger.allBalances()`, which only knows
+  about the plain per-role keys -- once a role has a Circle wallet, that's
+  no longer the balance actually being spent, but it kept showing (and
+  gating the demo's "enough funds?" check on) the now-irrelevant plain
+  balance instead. Both now show `<role> (circle)` / `<role>-circle` with
+  the real Circle-managed balance for any role that has one configured.
 - **Gemini's function-calling schema rejects `anyOf` unions** nested inside
   array-of-object tool/response schemas — affects any zod schema using
   `z.union([...])` or even `.nullable()` on a field inside an array item
@@ -73,31 +135,37 @@ Last updated: 2026-07-04.
 
 ## What's left, in priority order
 
-1. **Connect the frontend to `agent-ts`.** This is the single biggest gap.
-   Needs:
-   - CORS added to `agent-ts/packages/services/src/orchestrator.ts`
-     (`@fastify/cors`, not installed yet).
-   - An actual `/app` UI: job submission form (request text, protocol slug,
-     budget, optional target address / fault injection for demo purposes),
-     a results view showing the memo + per-claim match/mismatch/unverifiable
-     table + payout outcome, and a reputation dashboard page.
-   - Wire these to the orchestrator's existing endpoints: `POST /jobs`,
-     `GET /jobs/:id`, `GET /jobs`, `GET /reputation`, `GET /wallets`.
-2. **Decide the fate of `agent/` vs `agent-ts/`.** Recommend: treat `agent-ts`
-   as the real implementation going forward, explicitly document `agent/` as
-   archived/reference-only, so nobody accidentally builds new features on the
-   Python version.
-3. **Turn on Circle Wallets for real in `agent-ts`.** Code and docs already
-   exist (`agent-ts/README.md` → "Circle Wallets setup", `scripts/circle-setup.ts`).
-   Just needs someone to actually run the provisioning script and fund the
-   resulting wallets.
-4. **Fix the zero-claims-stuck-in-escrow edge case** (see above).
-5. **Add basic auth/rate-limiting** before any of this runs anywhere reachable
-   by someone other than the person testing it locally.
-6. **Phase 3 (later, separate effort, not urgent)**: extract the reusable
+Items 1–5 from the previous round are done (frontend connected, backend
+decision documented, Circle Wallets live, zero-claims fixed, basic
+auth/rate-limiting in and verified), the wallet-connect + on-chain-verified
+job flow is done and proven live, and the three follow-ups below are now
+closed too:
+
+- ~~`API_KEY`/`FRONTEND_ORIGIN` unset by default~~ — **done.** Both are set
+  for real in `agent-ts/.env` (`API_KEY`, a random 24-byte secret;
+  `FRONTEND_ORIGIN=http://localhost:3000`), matched by
+  `NEXT_PUBLIC_API_KEY` in `frontend/.env.local`. Verified live: `POST /jobs`
+  401s without the header and succeeds with it; CORS preflight from a
+  different origin gets back `Access-Control-Allow-Origin:
+  http://localhost:3000` (i.e. any other origin's browser rejects the
+  mismatched response) instead of reflecting the caller's origin.
+- ~~No UI affordance for "wrong network" recovery~~ — **done.**
+  `WalletConnectButton` now shows a "wallet not responding? add it
+  manually" toggle in the wrong-network state, revealing the exact network
+  name/RPC URL/chain ID/currency/explorer to paste into the wallet's own
+  "Add Network" form if the programmatic `wallet_addEthereumChain` call
+  gets ignored or silently fails.
+- **Circle wallets only provisioned for `requester` + 3 specialists +
+  `orchestrator`, not `escrow`** — not a gap, by design: `escrow` is the
+  contract deployer/owner, which needs a fixed plain address `setSettler()`
+  can trust; nothing to fix here.
+
+What's actually left:
+
+1. **Phase 3 (later, separate effort, not urgent)**: extract the reusable
    core into an actual published SDK package, with a LangChain.js adapter and
-   an ElizaOS plugin. Deliberately not started — do this only after items 1–5
-   above are done and the connected product has been used for real.
+   an ElizaOS plugin. Deliberately not started — do this only after the
+   connected product has been used for real.
 
 ## Where to look for more detail
 

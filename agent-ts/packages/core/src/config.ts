@@ -7,7 +7,20 @@
  * unset simply falls back to its plain viem-generated private key (see
  * wallet.ts / circleWallet.ts for how callers pick between the two).
  */
-import "dotenv/config";
+// Load .env from the repo root explicitly, not from process.cwd() (the bare
+// `import "dotenv/config"` this replaced). `npm run <script>
+// --workspace=<pkg>` runs with cwd set to that package's own directory, not
+// the repo root -- which silently loaded zero env vars (every WALLETS entry
+// falsy) the one time this was invoked that way instead of via the
+// documented `npm run demo` / direct `npx tsx .../runDemo.ts` entrypoints.
+import dotenv from "dotenv";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// packages/core/src -> packages/core -> packages -> agent-ts (repo root)
+export const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+dotenv.config({ path: path.join(REPO_ROOT, ".env") });
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -150,11 +163,9 @@ export const GOOGLE_API_KEYS_BY_ROLE: Record<string, string> = {
 // here -- see chain.ts.
 export const NANOPAYMENT_USDC = 0.01;
 
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// packages/core/src -> packages/core -> packages -> agent-ts (repo root)
-export const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 export const DATA_DIR = path.join(REPO_ROOT, "data");
 export const FIXTURES_DIR = path.join(REPO_ROOT, "fixtures");
+
+// --- Basic hardening (STATUS.md #5), both optional -- see services/src/security.ts ---
+export const API_KEY = process.env.API_KEY || "";
+export const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "";

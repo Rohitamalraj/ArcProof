@@ -19,8 +19,10 @@ import Fastify from "fastify";
 import { z } from "zod";
 
 import { ClaimSchema, config, evaluator } from "@arcproof/core";
+import { registerSecurity } from "./security.js";
 
 const app = Fastify({ logger: false });
+await registerSecurity(app);
 
 const EvaluateRequestSchema = z.object({
   job_id: z.string(),

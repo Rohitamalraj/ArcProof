@@ -12,9 +12,11 @@ import Fastify from "fastify";
 import { config, x402 } from "@arcproof/core";
 import { NEWS_TOOLS } from "../tools.js";
 import { runSpecialistAnalysis } from "./runAnalysis.js";
+import { registerSecurity } from "../security.js";
 
 const AGENT_ID = "news-agent-v1";
 const app = Fastify({ logger: false });
+await registerSecurity(app);
 
 const SYSTEM_PROMPT =
   "You are the news/fundamentals specialist in a bonded financial diligence network. " +

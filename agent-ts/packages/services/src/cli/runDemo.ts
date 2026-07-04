@@ -70,18 +70,38 @@ async function checkRealBalances(): Promise<boolean> {
   console.log(chalk.bold("\n=== REAL ARC TESTNET BALANCES (live RPC read, not a local ledger) ===\n"));
   console.log(`  RPC: ${config.ARC_RPC_URL}  |  chain id: ${config.ARC_CHAIN_ID}  |  connected: ${await chain.isConnected()}\n`);
 
-  const balances = await wallet.ledger.allBalances();
-  for (const [role, bal] of Object.entries(balances)) {
+  // A role with a Circle wallet configured signs its contract calls through
+  // THAT address now (see escrowContract.ts) -- the plain eth_account
+  // balance printed below for that role is no longer what actually gets
+  // spent, so print (and gate on) the Circle wallet's real on-chain balance
+  // instead wherever one exists.
+  const plainBalances = await wallet.ledger.allBalances();
+  const effective: Record<string, number> = {};
+  const effectiveAddress: Record<string, string> = {};
+  for (const role of Object.keys(plainBalances) as config.Role[]) {
+    const circleEntry = config.CIRCLE_WALLETS[role];
+    if (circleEntry) {
+      const label = `${role} (circle)`;
+      effective[label] = await chain.getBalanceUsdc(circleEntry.address);
+      effectiveAddress[label] = circleEntry.address;
+    } else {
+      effective[role] = plainBalances[role];
+      effectiveAddress[role] = wallet.roleAddress(role);
+    }
+  }
+  for (const [role, bal] of Object.entries(effective)) {
     console.log(`  ${role.padEnd(22)} ${bal.toFixed(6).padStart(12)} USDC`);
   }
 
-  const needed: Record<string, number> = { requester: JOB_BUDGET_USDC * 2, orchestrator: 0.05 };
-  const missing = Object.entries(needed).filter(([role, minAmount]) => (balances[role] ?? 0) < minAmount).map(([role]) => role);
+  const requesterKey = config.CIRCLE_WALLETS.requester ? "requester (circle)" : "requester";
+  const orchestratorKey = config.CIRCLE_WALLETS.orchestrator ? "orchestrator (circle)" : "orchestrator";
+  const needed: Record<string, number> = { [requesterKey]: JOB_BUDGET_USDC * 2, [orchestratorKey]: 0.05 };
+  const missing = Object.entries(needed).filter(([role, minAmount]) => (effective[role] ?? 0) < minAmount).map(([role]) => role);
   if (missing.length) {
     console.log(chalk.red("\n=== NOT ENOUGH TESTNET USDC TO RUN THE DEMO ===\n"));
     console.log("Fund these at https://faucet.circle.com (select Arc testnet, no account needed):\n");
     for (const role of missing) {
-      console.log(`  ${role.padEnd(14)} ${wallet.roleAddress(role as config.Role)}`);
+      console.log(`  ${role.padEnd(20)} ${effectiveAddress[role]}`);
     }
     console.log("\nThen rerun: npx tsx packages/services/src/cli/runDemo.ts\n");
     return false;

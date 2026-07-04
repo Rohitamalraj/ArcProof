@@ -86,11 +86,23 @@ def _send(role: str, fn, value_wei: int = 0):
 
 def lock(job_id: str, requester_role: str, amount_usdc: float) -> ContractTx:
     """Requester locks a job's budget into the contract (a real payable call).
-    Uses a real Circle-managed wallet for the `requester` role specifically
-    when CIRCLE_REQUESTER_WALLET_ID is configured (payments/circle_wallet.py)
-    -- falls back to the role's eth_account key otherwise. Either way the
-    contract sees a real `msg.sender` it records as that job's requester."""
-    if requester_role == "requester" and CIRCLE_REQUESTER_WALLET_ID:
+
+    The `requester` role locks exclusively through its real Circle-managed
+    wallet (payments/circle_wallet.py) -- there is no eth_account fallback
+    for this role. Any other role name (unused by the current orchestrator,
+    kept for flexibility) still signs with its own configured eth_account
+    key. Either way the contract sees a real `msg.sender` it records as
+    that job's requester.
+    """
+    if requester_role == "requester":
+        if not CIRCLE_REQUESTER_WALLET_ID:
+            raise EscrowContractError(
+                "CIRCLE_REQUESTER_WALLET_ID is not set in .env -- the requester role locks "
+                "budget exclusively through a real Circle-managed wallet now (no eth_account "
+                "fallback). Provision one with contracts/circle_setup.py and set "
+                "CIRCLE_API_KEY/CIRCLE_ENTITY_SECRET/CIRCLE_WALLET_SET_ID/"
+                "CIRCLE_REQUESTER_WALLET_ID/CIRCLE_REQUESTER_ADDRESS in .env."
+            )
         from payments import circle_wallet
         job_id_hex = "0x" + job_id_to_bytes32(job_id).hex()
         circle_result = circle_wallet.execute_contract(

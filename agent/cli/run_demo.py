@@ -95,22 +95,31 @@ async def wait_until_ready(port: int, timeout: float = 20.0) -> None:
 
 def check_real_balances() -> bool:
     """Reads live balances from Arc testnet. Returns False (with clear
-    instructions) instead of letting a job fail deep inside a transfer."""
+    instructions) instead of letting a job fail deep inside a transfer.
+
+    The requester role now locks budget exclusively through its real
+    Circle-managed wallet (payments/escrow_contract.py's lock(), no
+    eth_account fallback) -- so it's that wallet's on-chain balance that
+    gates the demo, not the eth_account `requester` wallet's (which is no
+    longer spent by lock() at all)."""
     rule("REAL ARC TESTNET BALANCES (live RPC read, not a local ledger)")
     console.print(f"  RPC: {ARC_RPC_URL}  |  chain id: {ARC_CHAIN_ID}  |  connected: {chain.is_connected()}\n")
 
-    balances = ledger.all_balances()
+    balances = {k: v for k, v in ledger.all_balances().items() if k != "requester"}
+    if CIRCLE_REQUESTER_ADDRESS:
+        balances["requester-circle"] = chain.get_balance_usdc(CIRCLE_REQUESTER_ADDRESS)
     for role, bal in balances.items():
         console.print(f"  {role:22s} {bal:12.6f} USDC")
 
-    needed = {"requester": JOB_BUDGET_USDC * 2, "orchestrator": 0.05}
+    addresses = {**{r: ledger.role_address(r) for r in ledger.all_balances()}, "requester-circle": CIRCLE_REQUESTER_ADDRESS}
+    needed = {"requester-circle": JOB_BUDGET_USDC * 2, "orchestrator": 0.05}
     missing = [role for role, min_amount in needed.items() if balances.get(role, 0) < min_amount]
     if missing:
         console.print()
         rule("NOT ENOUGH TESTNET USDC TO RUN THE DEMO", style="bold red")
         console.print("Fund these at https://faucet.circle.com (select Arc testnet, no account needed):\n")
         for role in missing:
-            console.print(f"  {role:14s} {ledger.role_address(role)}")
+            console.print(f"  {role:14s} {addresses[role]}")
         console.print("\nThen rerun: python -m cli.run_demo\n")
         return False
     return True

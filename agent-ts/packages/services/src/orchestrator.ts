@@ -27,8 +27,10 @@ import {
   store,
 } from "@arcproof/core";
 import { planSpecialists, writeMemo } from "./langchainPlanner.js";
+import { registerSecurity, checkApiKey } from "./security.js";
 
 const app = Fastify({ logger: false });
+await registerSecurity(app, { cors: true });
 
 const SPECIALIST_URLS: Record<string, string> = {
   "onchain-agent-v1": config.ONCHAIN_AGENT_URL,
@@ -53,8 +55,12 @@ async function callSpecialist(name: string, jobReq: { protocol_slug: string; tar
 }
 
 app.post("/jobs", async (request, reply) => {
+  if (!checkApiKey(request, reply)) return;
   const jobReq = JobRequestSchema.parse(request.body);
-  const jobId = `job_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
+  // A connected browser wallet that already called VeriFiEscrow.lock()
+  // itself supplies the same job_id it locked under; otherwise generate a
+  // fresh one and lock it ourselves (the CLI / no-wallet-connected path).
+  const jobId = jobReq.job_id || `job_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
   console.log(`\n=== NEW JOB ${jobId} -- ${jobReq.protocol_slug} ===`);
   console.log(`[orchestrator] received request: "${jobReq.request_text}" | budget=${jobReq.budget_usdc} USDC | template=${jobReq.template}`);
 
@@ -73,12 +79,37 @@ app.post("/jobs", async (request, reply) => {
     payouts: [],
   };
 
-  try {
-    await escrowContract.lock(jobId, jobReq.requester_wallet as config.Role, jobReq.budget_usdc);
-  } catch (e) {
-    job.status = "failed";
-    await store.jobStore.save(job);
-    return reply.code(402).send({ detail: `could not lock budget in escrow contract: ${e}` });
+  if (jobReq.payment_tx_hash) {
+    // Requester already locked for real via their own connected wallet --
+    // don't trust the claim, independently re-derive it from the contract
+    // itself (getJob is a plain view call, same "verify, don't trust"
+    // principle x402 already applies to specialist nanopayments).
+    let onChain;
+    try {
+      onChain = await escrowContract.getJob(jobId);
+    } catch (e) {
+      job.status = "failed";
+      await store.jobStore.save(job);
+      return reply.code(402).send({ detail: `could not read escrow contract state for job ${jobId}: ${e}` });
+    }
+    const requesterMatches = onChain.requester.toLowerCase() === jobReq.requester_wallet.toLowerCase();
+    const lockedEnough = onChain.lockedUsdc + 1e-9 >= jobReq.budget_usdc;
+    if (onChain.status !== "locked" || !requesterMatches || !lockedEnough) {
+      job.status = "failed";
+      await store.jobStore.save(job);
+      return reply.code(402).send({
+        detail: `job ${jobId} is not verifiably locked on-chain for ${jobReq.budget_usdc} USDC from ${jobReq.requester_wallet} (contract says: status=${onChain.status}, requester=${onChain.requester}, locked=${onChain.lockedUsdc})`,
+      });
+    }
+    console.log(`[orchestrator] budget verified on-chain: ${jobReq.requester_wallet.slice(0, 10)}.. locked ${onChain.lockedUsdc.toFixed(6)} USDC (tx ${jobReq.payment_tx_hash})`);
+  } else {
+    try {
+      await escrowContract.lock(jobId, jobReq.requester_wallet as config.Role, jobReq.budget_usdc);
+    } catch (e) {
+      job.status = "failed";
+      await store.jobStore.save(job);
+      return reply.code(402).send({ detail: `could not lock budget in escrow contract: ${e}` });
+    }
   }
 
   try {
@@ -114,6 +145,15 @@ app.post("/jobs", async (request, reply) => {
     const evalBody = (await evalResp.json()) as { claims: Claim[] };
     job.claims = evalBody.claims;
 
+    if (!settlement.hasCheckableClaims(job.claims)) {
+      // Every specialist failed, or every claim came back unverifiable --
+      // computeJobVerdict would call this a clean "accept" (0 mismatches),
+      // which finalize()s the contract with the full budget withheld
+      // forever instead of refunded. Throw so the catch block below runs
+      // the existing refund path instead of settling.
+      throw new Error(`no checkable claims for job ${jobId} (every specialist failed or all claims were unverifiable) -- refunding rather than auto-accepting`);
+    }
+
     const settled = await settlement.settle(job);
     await store.jobStore.save(settled);
 
@@ -148,7 +188,18 @@ app.get("/jobs", async () => store.jobStore.listAll());
 app.get("/reputation", async () => store.reputationStore.listAll());
 
 app.get("/wallets", async () => {
-  const balances = await wallet.ledger.allBalances();
+  const plain = await wallet.ledger.allBalances();
+  const balances: Record<string, number> = {};
+  for (const [role, bal] of Object.entries(plain)) {
+    const circleEntry = config.CIRCLE_WALLETS[role as config.Role];
+    if (circleEntry) {
+      // This role signs its contract calls through the Circle wallet now
+      // (see escrowContract.ts) -- that's the balance that actually moves.
+      balances[`${role}-circle`] = await chain.getBalanceUsdc(circleEntry.address);
+    } else {
+      balances[role] = bal;
+    }
+  }
   try {
     balances["escrow-contract"] = await chain.getBalanceUsdc(escrowContract.contractAddress());
   } catch {
@@ -156,6 +207,14 @@ app.get("/wallets", async () => {
   }
   return balances;
 });
+
+app.get("/config", async () => ({
+  arc_chain_id: config.ARC_CHAIN_ID,
+  arc_rpc_url: config.ARC_RPC_URL,
+  arc_explorer_url: config.ARC_EXPLORER_URL,
+  escrow_contract_address: escrowContract.contractAddress(),
+  nanopayment_usdc: config.NANOPAYMENT_USDC,
+}));
 
 export { app };
 

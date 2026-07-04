@@ -75,6 +75,17 @@ export const JobRequestSchema = z.object({
   target_address: z.string().nullable().optional(),
   // demo-only: force a specialist to fabricate a claim
   inject_fault: z.enum(["onchain", "news", "compliance"]).nullable().optional(),
+  // Set by a connected browser wallet that already called VeriFiEscrow.lock()
+  // itself (a real contract call, budget_usdc as msg.value) before
+  // submitting -- job_id must be the same string whose keccak256 was passed
+  // to lock(), so the orchestrator addresses the same on-chain job instead
+  // of generating a new one and trying to lock it again itself. When set,
+  // requester_wallet must be the real address that called lock() (its
+  // on-chain msg.sender), not a role name -- the orchestrator verifies the
+  // lock independently via escrowContract.getJob() rather than trusting
+  // this claim.
+  job_id: z.string().nullable().optional(),
+  payment_tx_hash: z.string().nullable().optional(),
 });
 export type JobRequest = z.infer<typeof JobRequestSchema>;
 

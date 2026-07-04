@@ -12,9 +12,11 @@ import Fastify from "fastify";
 import { config, x402 } from "@arcproof/core";
 import { COMPLIANCE_TOOLS } from "../tools.js";
 import { runSpecialistAnalysis } from "./runAnalysis.js";
+import { registerSecurity } from "../security.js";
 
 const AGENT_ID = "compliance-agent-v1";
 const app = Fastify({ logger: false });
+await registerSecurity(app);
 
 const DEFAULT_CLEAN_ADDRESS = "0x0000000000000000000000000000000000dead";
 

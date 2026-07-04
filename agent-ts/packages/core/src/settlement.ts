@@ -40,6 +40,21 @@ function checkable(claims: Claim[]): Claim[] {
   return claims.filter((c) => c.verification_status === "match" || c.verification_status === "mismatch");
 }
 
+/**
+ * True if at least one claim can actually be judged match/mismatch. A job
+ * with zero checkable claims (every specialist failed, or every claim came
+ * back unverifiable) must NOT be routed through settle() -- computeJobVerdict
+ * treats "no mismatches" as "accept" regardless of *why* there were none,
+ * which would finalize() the escrow contract with the requester's full
+ * budget silently withheld forever (marked "accepted" with nothing to show
+ * for it, and no automatic refund since the job never technically failed).
+ * Callers should refund instead of settling when this returns false -- see
+ * orchestrator.ts's create-job handler.
+ */
+export function hasCheckableClaims(claims: Claim[]): boolean {
+  return checkable(claims).length > 0;
+}
+
 export function computeJobVerdict(claims: Claim[]): Verdict {
   const checkableClaims = checkable(claims);
   const mismatches = checkableClaims.filter((c) => c.verification_status === "mismatch");

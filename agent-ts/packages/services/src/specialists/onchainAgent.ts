@@ -13,9 +13,11 @@ import Fastify from "fastify";
 import { config, x402 } from "@arcproof/core";
 import { ONCHAIN_TOOLS } from "../tools.js";
 import { runSpecialistAnalysis } from "./runAnalysis.js";
+import { registerSecurity } from "../security.js";
 
 const AGENT_ID = "onchain-agent-v1";
 const app = Fastify({ logger: false });
+await registerSecurity(app);
 
 const SYSTEM_PROMPT =
   "You are the on-chain data specialist in a bonded financial diligence network. " +

@@ -1,5 +1,11 @@
 # VeriFi Agents -- backend
 
+> **ARCHIVED -- reference implementation only.** `../agent-ts/` is the
+> primary, actively-developed backend (deterministic evaluator, wider Circle
+> Wallets support, further along end-to-end). Don't build new features here;
+> this folder is kept as-is for reference. See the top-level `README.md`
+> ("Two backends") and `STATUS.md` for the full rationale.
+
 Bonded, multi-agent financial diligence network: specialist agents get paid
 only after an evaluator independently re-checks their claims against live
 external data. Every payment in this codebase is a real, mined transaction
