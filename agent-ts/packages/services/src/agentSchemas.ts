@@ -39,7 +39,21 @@ export const ClaimDraftSchema = z.object({
         "flagged\" or \"did not touch\", since only the literal true/false string can be checked automatically."
     ),
   provider_source: z.string().describe("The exact source string/URL returned by the tool used"),
-  simulated: z.boolean().default(false).describe("True only if the tool's result explicitly said simulated=true"),
+  // Same fix as claim_value above, needed for a different provider this
+  // time: Groq's tool-calling returned the JSON string "false" for this
+  // field instead of the JSON boolean false ("expected boolean, but got
+  // string"), failing schema validation and losing the whole claim.
+  // Plain string + explicit true/false convention, coerced back to a real
+  // boolean in runAnalysis.ts before it reaches the wire schema (which
+  // does keep `simulated` a real z.boolean(), since that field isn't
+  // touched by either provider's structured-output quirk).
+  simulated: z
+    .string()
+    .default("false")
+    .describe(
+      "Whether the tool's result explicitly said simulated=true. Write the literal lowercase string \"true\" or " +
+        "\"false\" -- not a JSON boolean -- same convention as claim_value above."
+    ),
 });
 export type ClaimDraft = z.infer<typeof ClaimDraftSchema>;
 
