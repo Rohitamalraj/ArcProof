@@ -87,6 +87,20 @@ export async function requestAccounts(): Promise<Address> {
   return accounts[0] as Address;
 }
 
+/**
+ * Read-only, non-prompting check for whether this site is already
+ * authorized (MetaMask remembers per-origin authorization across page
+ * loads/refreshes) -- unlike requestAccounts()/eth_requestAccounts, this
+ * never shows a popup. Used to silently restore a "connected" state on
+ * mount instead of making the user click Connect again after every refresh.
+ */
+export async function getAuthorizedAccounts(): Promise<Address | null> {
+  const provider = getProvider();
+  if (!provider) return null;
+  const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
+  return accounts && accounts.length > 0 ? (accounts[0] as Address) : null;
+}
+
 export async function getChainIdHex(): Promise<string> {
   const provider = getProvider();
   if (!provider) {

@@ -62,8 +62,8 @@ export function LoadingTimeline({ isLoading, stage = "processing" }: Props) {
 
   if (stage === "awaiting-signature") {
     return (
-      <div className="flex items-center gap-3 rounded-2xl border border-violet-800/40 bg-violet-950/20 p-4 backdrop-blur-xl">
-        <span className="inline-flex h-8 w-8 shrink-0 animate-spin items-center justify-center rounded-full border-2 border-violet-500/30 border-t-violet-400" />
+      <div className="flex items-center gap-3 rounded-2xl border border-[#5eead4]/30 bg-[#5eead4]/10 p-4 backdrop-blur-xl">
+        <span className="inline-flex h-8 w-8 shrink-0 animate-spin items-center justify-center rounded-full border-2 border-[#5eead4]/30 border-t-[#5eead4]" />
         <div>
           <p className="text-sm font-medium text-zinc-100">Waiting for wallet signature...</p>
           <p className="mt-0.5 text-xs text-zinc-400">Approve the transaction in your wallet to lock the budget in the VeriFiEscrow contract on Arc testnet.</p>
@@ -86,7 +86,7 @@ export function LoadingTimeline({ isLoading, stage = "processing" }: Props) {
                   done
                     ? "inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-900/50 text-emerald-300"
                     : active
-                    ? "inline-flex h-5 w-5 items-center justify-center rounded-full bg-violet-900/50 text-violet-300"
+                    ? "inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#5eead4]/15 text-[#5eead4]"
                     : "inline-flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800 text-zinc-500"
                 }
               >

@@ -90,7 +90,7 @@ export function JobHistoryList() {
               </span>
               <p className="font-mono text-zinc-300">{fmtUsdc(job.total_paid_usdc, 2, 6)}</p>
               <p className="text-zinc-500">{fmtDate(job.created_at)}</p>
-              <Link href={`/jobs/${job.job_id}`} className="text-right text-violet-300 hover:underline">
+              <Link href={`/jobs/${job.job_id}`} className="text-right text-[#5eead4] hover:underline">
                 View →
               </Link>
             </div>

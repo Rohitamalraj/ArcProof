@@ -26,7 +26,7 @@ export function ReputationCard({ agent_id, record }: Props) {
       <p className={cn("mt-2 text-3xl font-semibold", accuracyColor(record.accuracy_score))}>{percentage.toFixed(1)}%</p>
 
       <progress
-        className="mt-3 h-2 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-zinc-800 [&::-webkit-progress-value]:bg-violet-500 [&::-moz-progress-bar]:bg-violet-500"
+        className="mt-3 h-2 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-zinc-800 [&::-webkit-progress-value]:bg-[#5eead4] [&::-moz-progress-bar]:bg-[#5eead4]"
         value={percentage}
         max={100}
       />

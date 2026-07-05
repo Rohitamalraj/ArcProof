@@ -143,9 +143,9 @@ export function WalletConnectButton() {
         type="button"
         onClick={connect}
         disabled={status === "connecting"}
-        className="inline-flex items-center gap-2 rounded-full border border-violet-700/60 bg-violet-950/50 px-3 py-1.5 text-xs font-medium text-violet-200 backdrop-blur-md transition hover:bg-violet-900/60 disabled:cursor-wait disabled:opacity-70"
+        className="inline-flex items-center gap-2 rounded-full border border-[#5eead4]/40 bg-[#5eead4]/10 px-3 py-1.5 text-xs font-medium text-[#5eead4] backdrop-blur-md transition hover:bg-[#5eead4]/20 disabled:cursor-wait disabled:opacity-70"
       >
-        <span className="h-2 w-2 rounded-full bg-violet-400" />
+        <span className="h-2 w-2 rounded-full bg-[#5eead4]" />
         {status === "connecting" ? "Connecting..." : walletDetected ? "Connect Wallet" : "Install Wallet"}
       </button>
       {error ? <span className="max-w-[220px] text-right text-[10px] text-red-400">{error}</span> : null}

@@ -146,13 +146,19 @@ export default function AppPage() {
         <div className="relative z-10 mx-auto max-w-6xl space-y-8">
           <header className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4 shadow-xl shadow-black/20 backdrop-blur-xl">
             <div>
-              <h1 className="bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-2xl font-semibold text-transparent">ArcProof</h1>
+              <Link href="/" className="inline-flex items-baseline gap-2 group">
+                <span className="font-display text-2xl tracking-tight text-white">ArcProof</span>
+                <span className="font-mono text-xs text-white/40 group-hover:text-[#5eead4]">testnet</span>
+              </Link>
               <p className="mt-1 text-sm text-zinc-400">AI specialists verify claims. Payment releases only on match.</p>
             </div>
             <div className="flex items-center gap-3">
               <span className="inline-flex items-center gap-2 rounded-full border border-emerald-800/60 bg-emerald-950/40 px-3 py-1.5 text-xs text-emerald-300">
                 <span className="h-2 w-2 rounded-full bg-emerald-400" /> Arc Testnet
               </span>
+              <Link href="/" className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/5">
+                ← Home
+              </Link>
               <Link href="/reputation" className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/5">
                 Reputation →
               </Link>
@@ -163,11 +169,11 @@ export default function AppPage() {
           <WalletBalances />
 
           <section className="mx-auto max-w-2xl rounded-2xl border border-white/10 bg-white/[0.04] p-6 shadow-2xl shadow-black/30 backdrop-blur-xl ring-1 ring-white/[0.03]">
-            <h2 className="text-xl font-semibold">Protocol Diligence</h2>
+            <h2 className="font-display text-2xl tracking-tight">Protocol Diligence</h2>
             <p className="mt-1 text-sm text-zinc-400">Submit a protocol request for multi-agent verification and conditional settlement.</p>
 
             {!walletReady ? (
-              <div className="mt-4 rounded-xl border border-violet-800/40 bg-violet-950/20 p-3 text-xs text-violet-200">
+              <div className="mt-4 rounded-xl border border-[#5eead4]/30 bg-[#5eead4]/10 p-3 text-xs text-[#5eead4]">
                 {wallet.status === "wrong_network"
                   ? "Switch your wallet to Arc Testnet (top right) before submitting a job."
                   : "Connect a wallet (top right) to sign the real on-chain budget lock and submit a diligence request."}
@@ -184,7 +190,7 @@ export default function AppPage() {
                   value={form.protocol_slug}
                   onChange={(e) => setForm((prev) => ({ ...prev, protocol_slug: e.target.value.trim().toLowerCase() }))}
                   placeholder="e.g. aave, uniswap, compound"
-                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none ring-violet-500/50 focus:ring"
+                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none ring-[#5eead4]/50 focus:ring"
                   required
                 />
                 <p className="text-xs text-zinc-500">DefiLlama slug - lowercase, no spaces.</p>
@@ -200,7 +206,7 @@ export default function AppPage() {
                   onChange={(e) => setForm((prev) => ({ ...prev, request_text: e.target.value }))}
                   placeholder="e.g. Assess Aave before treasury deployment."
                   rows={3}
-                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none ring-violet-500/50 focus:ring"
+                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none ring-[#5eead4]/50 focus:ring"
                   minLength={10}
                   required
                 />
@@ -215,7 +221,7 @@ export default function AppPage() {
                   value={form.template || ""}
                   onChange={(e) => setForm((prev) => ({ ...prev, template: e.target.value || undefined }))}
                   placeholder="Leave blank to let the orchestrator's LLM infer one"
-                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none ring-violet-500/50 focus:ring"
+                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none ring-[#5eead4]/50 focus:ring"
                 />
               </div>
 
@@ -228,14 +234,14 @@ export default function AppPage() {
                   value={form.target_address || ""}
                   onChange={(e) => setForm((prev) => ({ ...prev, target_address: e.target.value || undefined }))}
                   placeholder={CLEAN_DEMO_ADDRESS}
-                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs outline-none ring-violet-500/50 focus:ring"
+                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs outline-none ring-[#5eead4]/50 focus:ring"
                 />
                 <p className="text-xs text-zinc-500">
                   Try the real OFAC-sanctioned demo address:{" "}
                   <button
                     type="button"
                     onClick={() => setForm((prev) => ({ ...prev, target_address: SANCTIONED_DEMO_ADDRESS }))}
-                    className="font-mono text-violet-300 hover:underline"
+                    className="font-mono text-[#5eead4] hover:underline"
                   >
                     {SANCTIONED_DEMO_ADDRESS}
                   </button>
@@ -255,7 +261,7 @@ export default function AppPage() {
                       inject_fault: (e.target.value || undefined) as JobRequest["inject_fault"],
                     }))
                   }
-                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none ring-violet-500/50 focus:ring"
+                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none ring-[#5eead4]/50 focus:ring"
                 >
                   <option value="">None - clean run</option>
                   <option value="onchain">On-chain agent lies about TVL</option>
@@ -280,7 +286,7 @@ export default function AppPage() {
                   step={0.05}
                   value={form.budget_usdc}
                   onChange={(e) => setForm((prev) => ({ ...prev, budget_usdc: Number(e.target.value) }))}
-                  className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-violet-500"
+                  className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-[#5eead4]"
                 />
               </div>
 
@@ -290,7 +296,7 @@ export default function AppPage() {
                 <button
                   type="submit"
                   disabled={!canSubmit}
-                  className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-violet-950/50 hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-violet-900/40 disabled:text-zinc-500 disabled:shadow-none"
+                  className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-background shadow-lg shadow-black/30 hover:bg-foreground/90 disabled:cursor-not-allowed disabled:bg-foreground/20 disabled:text-muted-foreground disabled:shadow-none"
                 >
                   {walletReady ? `Lock ${fmtUsdc(form.budget_usdc)} USDC & Run Diligence →` : "Connect Wallet to Continue"}
                 </button>
@@ -329,7 +335,7 @@ export default function AppPage() {
           {job ? (
             <section className="space-y-5">
               <JobResultPanel job={job} />
-              <Link href="/reputation" className="inline-flex text-sm text-violet-300 hover:underline">
+              <Link href="/reputation" className="inline-flex text-sm text-[#5eead4] hover:underline">
                 View Agent Reputation →
               </Link>
               <JobHistoryList />

@@ -3,6 +3,7 @@ import type { Address } from "viem";
 
 import { ARC_CHAIN_ID_HEX } from "@/lib/arc";
 import {
+  getAuthorizedAccounts,
   getChainIdHex,
   getNativeBalance,
   getProvider,
@@ -23,6 +24,7 @@ type WalletState = {
   disconnect: () => void;
   refreshBalance: () => Promise<void>;
   switchNetwork: () => Promise<void>;
+  restoreConnection: () => Promise<void>;
   _initListeners: () => void;
 };
 
@@ -80,6 +82,32 @@ export const useWalletStore = create<WalletState>((set, get) => ({
 
   disconnect: () => {
     set({ status: "disconnected", address: "", chainId: "", balanceUsdc: null, error: "" });
+  },
+
+  // Called once on app mount (see app/providers.tsx) -- silently restores
+  // the connected state via eth_accounts (no popup) if this origin is
+  // already authorized, so refreshing the page doesn't force the user to
+  // click Connect again every time.
+  restoreConnection: async () => {
+    if (get().status !== "disconnected") {
+      return;
+    }
+    try {
+      const address = await getAuthorizedAccounts();
+      if (!address) {
+        return;
+      }
+      const chainId = await getChainIdHex();
+      if (chainId !== ARC_CHAIN_ID_HEX) {
+        set({ status: "wrong_network", address, chainId, error: "" });
+        return;
+      }
+      const balanceUsdc = await getNativeBalance(address);
+      set({ status: "connected", address, chainId, balanceUsdc, error: "" });
+      get()._initListeners();
+    } catch {
+      // Silent -- worst case the user just sees the normal "Connect" button.
+    }
   },
 
   refreshBalance: async () => {

@@ -78,7 +78,7 @@ export function ClaimTable({ claims }: Props) {
                       href={claim.verification_source}
                       target="_blank"
                       rel="noreferrer"
-                      className="break-all text-violet-300 underline-offset-2 hover:underline"
+                      className="break-all text-[#5eead4] underline-offset-2 hover:underline"
                     >
                       {claim.verification_source}
                     </a>

@@ -25,9 +25,14 @@ export default function JobDetailPage() {
       <main className="relative min-h-screen px-6 py-10 text-zinc-100">
         <AppBackground />
         <div className="relative z-10 mx-auto max-w-6xl space-y-5">
-          <Link href="/app" className="inline-flex text-sm text-violet-300 hover:underline">
-            ← New Job
-          </Link>
+          <div className="flex flex-wrap items-center gap-4 text-sm">
+            <Link href="/" className="text-[#5eead4] hover:underline">
+              ← Home
+            </Link>
+            <Link href="/app" className="text-[#5eead4] hover:underline">
+              New Job →
+            </Link>
+          </div>
 
           <p className="font-mono text-xs text-zinc-500">Job ID: {jobId}</p>
 
@@ -55,7 +60,7 @@ export default function JobDetailPage() {
 
           {!isLoading && !isError && !data ? (
             <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 text-sm text-zinc-400 backdrop-blur-xl">
-              Job not found. <Link href="/app" className="text-violet-300 hover:underline">Return to new job</Link>.
+              Job not found. <Link href="/app" className="text-[#5eead4] hover:underline">Return to new job</Link>.
             </div>
           ) : null}
 

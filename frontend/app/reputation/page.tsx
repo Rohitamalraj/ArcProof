@@ -22,12 +22,17 @@ export default function ReputationPage() {
       <main className="relative min-h-screen px-6 py-10 text-zinc-100">
         <AppBackground />
         <div className="relative z-10 mx-auto max-w-6xl space-y-6">
-          <Link href="/app" className="inline-flex text-sm text-violet-300 hover:underline">
-            ← Submit New Job
-          </Link>
+          <div className="flex flex-wrap items-center gap-4 text-sm">
+            <Link href="/" className="text-[#5eead4] hover:underline">
+              ← Home
+            </Link>
+            <Link href="/app" className="text-[#5eead4] hover:underline">
+              Submit New Job →
+            </Link>
+          </div>
 
           <header>
-            <h1 className="bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-3xl font-semibold text-transparent">Agent Reputation</h1>
+            <h1 className="font-display text-4xl tracking-tight text-white">Agent Reputation</h1>
             <p className="mt-1 text-sm text-zinc-400">
               Accuracy = verified claims ÷ (verified + failed). Unverifiable claims excluded.
             </p>
