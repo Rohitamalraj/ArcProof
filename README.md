@@ -272,35 +272,38 @@ ArcProof/
 │   │   │       ├── langchainPlanner.ts # LLM specialist-selection + memo-writing
 │   │   │       ├── specialists/        # onchainAgent, newsAgent, complianceAgent, runAnalysis.ts
 │   │   │       └── evaluatorService.ts # thin Fastify wrapper around core/evaluator.ts
-│   │   ├── contracts/                  # VeriFiEscrow.json ABI + deploy.ts
-│   │   ├── sdk/                        # @arcproof/sdk — published, generalized trust layer
-│   │   ├── sdk-langchain/              # @arcproof/sdk-langchain — published
-│   │   └── sdk-elizaos/                # @arcproof/sdk-elizaos — published
+│   │   └── contracts/                  # VeriFiEscrow.json ABI + deploy.ts
 │   └── examples/
-│       ├── defi-diligence-agent/       # SDK proof #1 — the original vertical
+│       ├── defi-diligence-agent/       # SDK proof #1 — the original vertical (imports the
+│       │                                #   published @arcproof/sdk from /sdk, not a local path)
 │       └── lending-apr-agent/          # SDK proof #2 — an unrelated vertical
+│
+├── sdk/                                # The published SDK -- its own top-level workspace,
+│   └── packages/                       #   fully independent of agent-ts (no shared code with
+│       ├── sdk/                        #   its private @arcproof/core/@arcproof/services)
+│       │                                # @arcproof/sdk — published, generalized trust layer
+│       ├── sdk-langchain/              # @arcproof/sdk-langchain — published
+│       └── sdk-elizaos/                # @arcproof/sdk-elizaos — published
 │
 ├── agent/                              # Python backend — reference implementation, ARCHIVED
 │                                        # (kept as-is; agent-ts is the direction to build on)
 │
-├── frontend/                           # Next.js 16 app, connected to agent-ts
-│   ├── app/
-│   │   ├── page.tsx                    # Landing page
-│   │   ├── app/page.tsx                # Submit a job, live activity feed, 3D agent network
-│   │   ├── dashboard/page.tsx          # Network-wide stats, wallet balances, full job history
-│   │   ├── reputation/page.tsx         # Per-agent accuracy
-│   │   └── jobs/[id]/page.tsx          # Job permalink
-│   ├── components/
-│   │   ├── ActivityLog.tsx             # Live/replayed real per-job event feed
-│   │   ├── TransactionLedger.tsx       # Every real on-chain tx a job touched
-│   │   ├── AgentScene3D.tsx            # Real-time 3D agent-network view (react-three-fiber)
-│   │   └── landing/navigation.tsx      # Site-wide nav (Home / App / Dashboard / Reputation)
-│   └── lib/
-│       ├── wallet.ts, walletStore.ts   # viem-backed injected wallet, Arc network add/switch
-│       └── api.ts                      # Typed orchestrator client
-│
-├── HACKATHON.md                        # Original PRD / hackathon reference (historical context)
-└── STATUS.md                           # Working log of what's done / what's left
+└── frontend/                           # Next.js 16 app, connected to agent-ts
+    ├── app/
+    │   ├── page.tsx                    # Landing page
+    │   ├── app/page.tsx                # Submit a job, live activity feed, 3D agent network
+    │   ├── dashboard/page.tsx          # Network-wide stats, wallet balances, full job history
+    │   ├── reputation/page.tsx         # Per-agent accuracy
+    │   ├── jobs/[id]/page.tsx          # Job permalink
+    │   └── docs/                       # SDK documentation site
+    ├── components/
+    │   ├── ActivityLog.tsx             # Live/replayed real per-job event feed
+    │   ├── TransactionLedger.tsx       # Every real on-chain tx a job touched
+    │   ├── AgentScene3D.tsx            # Real-time 3D agent-network view (react-three-fiber)
+    │   └── landing/navigation.tsx      # Site-wide nav (Home / App / Dashboard / Reputation / Docs)
+    └── lib/
+        ├── wallet.ts, walletStore.ts   # viem-backed injected wallet, Arc network add/switch
+        └── api.ts                      # Typed orchestrator client
 ```
 
 ---
@@ -337,8 +340,14 @@ ArcProof/
 ### Install
 
 ```bash
-cd agent-ts && npm install
+cd agent-ts && npm install    # pulls the published @arcproof/sdk* packages from npm for the examples
 cd ../frontend && npm install
+```
+
+Only developing the SDK itself (not just consuming it)? `/sdk` is its own separate workspace:
+
+```bash
+cd sdk && npm install
 ```
 
 ### Environment
