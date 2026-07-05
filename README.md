@@ -1,4 +1,4 @@
-# ArcProof — Agents Only Get Paid When Their Work Is Actually True
+# ArcProof — The First Trust Layer Where Agents Only Get Paid When Their Work Is True
 
 > **A bonded, multi-agent financial diligence network where specialist AI agents research a protocol, an evaluator agent independently re-derives every claim they make against live external data, and payment only settles — per specialist, not per job — when the work checks out.**
 

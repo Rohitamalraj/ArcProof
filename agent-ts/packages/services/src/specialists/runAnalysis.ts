@@ -31,13 +31,15 @@ export async function runSpecialistAnalysis(
   // *type* too.
   allowedClaimTypes: readonly [ClaimType, ...ClaimType[]]
 ): Promise<Claim[]> {
-  // Groq's tool-calling occasionally rejects a perfectly correct response
-  // with a "tool_use_failed" error -- observed live multiple times across
-  // different specialists, each time with the right answer already sitting
-  // in the rejected request's own failed_generation field. It's a one-off
-  // formatting hiccup, not a real reasoning failure, so one immediate retry
-  // (same prompt, fresh model call) resolves it far more often than not --
-  // cheaper than failing the whole job and refunding over a transient blip.
+  // Two distinct transient failure modes observed live, neither a real
+  // reasoning failure, both worth one retry before giving up on this call:
+  //   1. Groq's tool-calling occasionally rejects a perfectly correct
+  //      response with a "tool_use_failed" error -- throws, caught below.
+  //   2. Gemini's ReAct loop occasionally finishes without calling any of
+  //      its tools at all and returns a clean {claims: []} -- doesn't
+  //      throw, so it needs its own check: an empty result is treated as
+  //      retry-worthy too, since a specialist asked about a real protocol
+  //      almost always has *something* to report.
   const MAX_ATTEMPTS = 2;
   let drafts: ClaimDraft[] = [];
   let lastError: unknown = null;
@@ -53,7 +55,8 @@ export async function runSpecialistAnalysis(
       const result = await agent.invoke({ messages: [{ role: "user", content: userMsg }] });
       drafts = (result.structuredResponse as { claims: ClaimDraft[] }).claims;
       lastError = null;
-      break;
+      if (drafts.length > 0 || attempt === MAX_ATTEMPTS) break;
+      console.log(`[${agentId}]   ! attempt ${attempt}/${MAX_ATTEMPTS} produced 0 claims with no error -- retrying once`);
     } catch (e) {
       lastError = e;
       if (attempt < MAX_ATTEMPTS) {

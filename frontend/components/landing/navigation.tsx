@@ -14,6 +14,7 @@ const navLinks = [
   { name: "App",        href: "/app"         },
   { name: "Dashboard",  href: "/dashboard"   },
   { name: "Reputation", href: "/reputation"  },
+  { name: "Docs",       href: "/docs"        },
 ];
 
 export function Navigation() {
