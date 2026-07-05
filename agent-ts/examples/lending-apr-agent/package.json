@@ -9,8 +9,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@arcproof/sdk": "*",
-    "@arcproof/sdk-langchain": "*",
+    "@arcproof/sdk": "^0.1.0",
+    "@arcproof/sdk-langchain": "^0.1.0",
+    "@arcproof/sdk-elizaos": "^0.2.0",
     "@langchain/core": "^0.3.30",
     "@langchain/groq": "^0.1.3",
     "@langchain/google-genai": "^0.1.7",

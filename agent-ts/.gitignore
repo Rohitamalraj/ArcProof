@@ -1,11 +1,9 @@
 node_modules/
+# The published SDK packages (which used to live under packages/sdk*, and
+# needed a dist/ unignore exception here) have moved to their own top-level
+# /sdk workspace -- everything left in agent-ts (core, services, contracts,
+# examples) runs straight off src/ via tsx and has no reason to commit
+# build output, so this can stay a plain blanket ignore.
 dist/
-# Published SDK packages ship their compiled output (npm consumers need
-# dist/, not src/) -- unignore it for those three specifically. Everything
-# else (core, services, contracts, examples) runs straight off src/ via tsx
-# and has no reason to commit build output.
-!packages/sdk/dist/
-!packages/sdk-langchain/dist/
-!packages/sdk-elizaos/dist/
 data/*.json
 *.tsbuildinfo

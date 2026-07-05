@@ -9,9 +9,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@arcproof/sdk": "*",
-    "@arcproof/sdk-langchain": "*",
-    "@arcproof/sdk-elizaos": "*",
+    "@arcproof/sdk": "^0.1.0",
+    "@arcproof/sdk-langchain": "^0.1.0",
+    "@arcproof/sdk-elizaos": "^0.2.0",
     "@arcproof/core": "*",
     "@langchain/core": "^0.3.30",
     "@langchain/groq": "^0.1.3",
