@@ -31,19 +31,38 @@ export async function runSpecialistAnalysis(
   // *type* too.
   allowedClaimTypes: readonly [ClaimType, ...ClaimType[]]
 ): Promise<Claim[]> {
+  // Groq's tool-calling occasionally rejects a perfectly correct response
+  // with a "tool_use_failed" error -- observed live multiple times across
+  // different specialists, each time with the right answer already sitting
+  // in the rejected request's own failed_generation field. It's a one-off
+  // formatting hiccup, not a real reasoning failure, so one immediate retry
+  // (same prompt, fresh model call) resolves it far more often than not --
+  // cheaper than failing the whole job and refunding over a transient blip.
+  const MAX_ATTEMPTS = 2;
   let drafts: ClaimDraft[] = [];
-  try {
-    const agent = createReactAgent({
-      llm: getModel(agentId),
-      tools,
-      responseFormat: SpecialistClaimsSchema,
-      prompt: systemPrompt,
-    });
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const agent = createReactAgent({
+        llm: getModel(agentId),
+        tools,
+        responseFormat: SpecialistClaimsSchema,
+        prompt: systemPrompt,
+      });
 
-    const result = await agent.invoke({ messages: [{ role: "user", content: userMsg }] });
-    drafts = (result.structuredResponse as { claims: ClaimDraft[] }).claims;
-  } catch (e) {
-    console.log(`[${agentId}]   ! LLM agent unavailable (${e}) -- no claims produced this call`);
+      const result = await agent.invoke({ messages: [{ role: "user", content: userMsg }] });
+      drafts = (result.structuredResponse as { claims: ClaimDraft[] }).claims;
+      lastError = null;
+      break;
+    } catch (e) {
+      lastError = e;
+      if (attempt < MAX_ATTEMPTS) {
+        console.log(`[${agentId}]   ! attempt ${attempt}/${MAX_ATTEMPTS} failed (${e}) -- retrying once`);
+      }
+    }
+  }
+  if (lastError) {
+    console.log(`[${agentId}]   ! LLM agent unavailable after ${MAX_ATTEMPTS} attempts (${lastError}) -- no claims produced this call`);
     drafts = [];
   }
 

@@ -70,8 +70,19 @@ function toNumber(v: unknown): number | null {
 function toBool(v: unknown): boolean | null {
   if (typeof v === "boolean") return v;
   if (typeof v === "string") {
-    if (v.toLowerCase() === "true") return true;
-    if (v.toLowerCase() === "false") return false;
+    const s = v.trim().toLowerCase();
+    if (s === "true" || s === "false") return s === "true";
+    // A specialist's LLM sometimes wraps the literal in extra text
+    // despite the schema instruction to return it bare (observed live:
+    // the compliance agent returning "flagged=true" instead of just
+    // "true", which used to fail this exact-match check and get marked
+    // unverifiable even though the value was perfectly legible). Falling
+    // back to a whole-word search is safe specifically because it's only
+    // trusted when unambiguous -- exactly one of true/false appears.
+    const hasTrue = /\btrue\b/.test(s);
+    const hasFalse = /\bfalse\b/.test(s);
+    if (hasTrue && !hasFalse) return true;
+    if (hasFalse && !hasTrue) return false;
   }
   return null;
 }
