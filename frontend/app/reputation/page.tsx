@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import { AppBackground } from "@/components/AppBackground";
@@ -19,18 +18,9 @@ export default function ReputationPage() {
 
   return (
     <ErrorBoundary>
-      <main className="relative min-h-screen px-6 py-10 text-zinc-100">
-        <AppBackground />
+      <main className="relative min-h-screen px-6 pb-10 pt-28 text-zinc-100">
+        <AppBackground image="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Upscaled%20Image%20%2812%29-ng3RrNnsPMJ5CrtOjcPTmhHg01W11q.png" />
         <div className="relative z-10 mx-auto max-w-6xl space-y-6">
-          <div className="flex flex-wrap items-center gap-4 text-sm">
-            <Link href="/" className="text-[#5eead4] hover:underline">
-              ← Home
-            </Link>
-            <Link href="/app" className="text-[#5eead4] hover:underline">
-              Submit New Job →
-            </Link>
-          </div>
-
           <header>
             <h1 className="font-display text-4xl tracking-tight text-white">Agent Reputation</h1>
             <p className="mt-1 text-sm text-zinc-400">

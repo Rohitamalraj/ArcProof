@@ -4,10 +4,13 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
+import { ActivityLog } from "@/components/ActivityLog";
+import { AgentScene3D } from "@/components/AgentScene3D";
 import { AppBackground } from "@/components/AppBackground";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { JobResultPanel } from "@/components/JobResultPanel";
-import { getJob } from "@/lib/api";
+import { TransactionLedger } from "@/components/TransactionLedger";
+import { getConfig, getJob, getJobLogs } from "@/lib/api";
 
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
@@ -20,20 +23,18 @@ export default function JobDetailPage() {
     refetchInterval: 30000,
   });
 
+  const configQuery = useQuery({ queryKey: ["config"], queryFn: getConfig, staleTime: 60000 });
+  const logsQuery = useQuery({
+    queryKey: ["job-logs", jobId],
+    queryFn: () => getJobLogs(jobId),
+    enabled: Boolean(jobId),
+  });
+
   return (
     <ErrorBoundary>
-      <main className="relative min-h-screen px-6 py-10 text-zinc-100">
+      <main className="relative min-h-screen px-6 pb-10 pt-28 text-zinc-100">
         <AppBackground />
         <div className="relative z-10 mx-auto max-w-6xl space-y-5">
-          <div className="flex flex-wrap items-center gap-4 text-sm">
-            <Link href="/" className="text-[#5eead4] hover:underline">
-              ← Home
-            </Link>
-            <Link href="/app" className="text-[#5eead4] hover:underline">
-              New Job →
-            </Link>
-          </div>
-
           <p className="font-mono text-xs text-zinc-500">Job ID: {jobId}</p>
 
           {isLoading ? (
@@ -64,7 +65,21 @@ export default function JobDetailPage() {
             </div>
           ) : null}
 
-          {data ? <JobResultPanel job={data} /> : null}
+          {data ? (
+            <div className="space-y-5">
+              <JobResultPanel job={data} explorerBaseUrl={configQuery.data?.arc_explorer_url ?? ""} />
+              <div className="space-y-3">
+                <h3 className="font-display text-xl text-zinc-100">Transaction Ledger</h3>
+                <TransactionLedger job={data} explorerBaseUrl={configQuery.data?.arc_explorer_url ?? ""} />
+              </div>
+              {logsQuery.data?.length ? (
+                <div className="grid gap-5 lg:grid-cols-[1fr_460px]">
+                  <ActivityLog logs={logsQuery.data} title="Full Agent Activity Log" />
+                  <AgentScene3D logs={logsQuery.data} />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </main>
     </ErrorBoundary>
