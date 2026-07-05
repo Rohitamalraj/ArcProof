@@ -16,6 +16,10 @@ export interface JobResponse {
   total_paid_usdc: number;
   claims: Claim[];
   payouts: Payout[];
+  // Real on-chain tx hashes for the job-level escrow calls.
+  lock_tx_hash?: string | null;
+  finalize_tx_hash?: string | null;
+  refund_tx_hash?: string | null;
 }
 
 export interface Claim {
@@ -55,6 +59,9 @@ export interface Payout {
   paid_usdc: number;
   fraction_paid: number;
   outcome: "full" | "partial" | "withheld";
+  // Real on-chain tx hashes for this specialist's two payments.
+  nanopayment_tx_hash?: string | null;
+  settlement_tx_hash?: string | null;
 }
 
 export interface ReputationRecord {
@@ -97,6 +104,21 @@ export interface BackendConfig {
   arc_explorer_url: string;
   escrow_contract_address: string;
   nanopayment_usdc: number;
+}
+
+export interface JobLogEntry {
+  ts: string;
+  level: "info" | "success" | "warn" | "error";
+  message: string;
+  txHash?: string;
+  explorerUrl?: string;
+  // Who-talked-to-whom metadata (agent-ts's jobLog.ts) -- drives the 3D
+  // agent-network scene's traveling packets. Actor ids: "requester",
+  // "orchestrator", "onchain-agent-v1", "news-agent-v1",
+  // "compliance-agent-v1", "evaluator-v1", "escrow".
+  from?: string;
+  to?: string;
+  kind?: "call" | "payment" | "response" | "verdict" | "settlement" | "system";
 }
 
 export interface JobHistoryItem {

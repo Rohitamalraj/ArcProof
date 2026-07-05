@@ -1,5 +1,5 @@
+import { AgentBadge } from "@/components/AgentBadge";
 import { CLAIM_TYPE_COLORS } from "@/lib/constants";
-import { agentDisplayName } from "@/lib/format";
 import type { Claim } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -53,7 +53,9 @@ export function ClaimTable({ claims }: Props) {
 
             return (
               <tr key={claim.claim_id} className="border-t border-white/10 align-top">
-                <td className="px-3 py-3 text-zinc-200">{agentDisplayName(claim.provider_agent_id)}</td>
+                <td className="px-3 py-3 text-zinc-200">
+                  <AgentBadge agentId={claim.provider_agent_id} />
+                </td>
                 <td className="px-3 py-3">
                   <span
                     className={cn(

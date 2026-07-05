@@ -5,6 +5,17 @@ export const AGENT_NAMES: Record<string, string> = {
   "evaluator-v1": "Evaluator",
 };
 
+// Small, consistent per-role accent used for the agent badge dot (ClaimTable,
+// SettlementCards) -- purely a visual "which agent is this" cue, distinct
+// from the semantic match/mismatch/outcome coloring used elsewhere.
+export const AGENT_ACCENTS: Record<string, string> = {
+  "onchain-agent-v1": "bg-blue-400",
+  "news-agent-v1": "bg-orange-400",
+  "compliance-agent-v1": "bg-red-400",
+  "evaluator-v1": "bg-[#5eead4]",
+};
+export const DEFAULT_AGENT_ACCENT = "bg-zinc-500";
+
 export const CLAIM_TYPE_COLORS: Record<string, string> = {
   tvl: "bg-blue-900/40 text-blue-300",
   price_change: "bg-purple-900/40 text-purple-300",

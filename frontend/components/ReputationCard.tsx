@@ -1,4 +1,5 @@
-import { agentDisplayName, fmtDate } from "@/lib/format";
+import { AgentBadge } from "@/components/AgentBadge";
+import { fmtDate } from "@/lib/format";
 import type { ReputationRecord } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -22,7 +23,7 @@ export function ReputationCard({ agent_id, record }: Props) {
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-lg shadow-black/20 backdrop-blur-xl transition hover:border-white/20">
-      <p className="text-sm text-zinc-400">{agentDisplayName(agent_id)}</p>
+      <AgentBadge agentId={agent_id} className="text-sm text-zinc-400" />
       <p className={cn("mt-2 text-3xl font-semibold", accuracyColor(record.accuracy_score))}>{percentage.toFixed(1)}%</p>
 
       <progress

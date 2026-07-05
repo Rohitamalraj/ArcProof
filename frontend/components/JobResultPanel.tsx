@@ -8,9 +8,10 @@ import type { JobResponse } from "@/lib/types";
 
 type Props = {
   job: JobResponse;
+  explorerBaseUrl?: string;
 };
 
-export function JobResultPanel({ job }: Props) {
+export function JobResultPanel({ job, explorerBaseUrl = "" }: Props) {
   return (
     <section className="space-y-6">
       <VerdictBanner verdict={job.overall_verdict} total_paid={job.total_paid_usdc} agent_count={job.payouts.length} />
@@ -27,7 +28,7 @@ export function JobResultPanel({ job }: Props) {
 
       <div className="space-y-3">
         <h3 className="font-display text-xl text-zinc-100">Settlement</h3>
-        <SettlementCards payouts={job.payouts} claims={job.claims} />
+        <SettlementCards payouts={job.payouts} claims={job.claims} explorerBaseUrl={explorerBaseUrl} />
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-4 text-xs text-zinc-400">

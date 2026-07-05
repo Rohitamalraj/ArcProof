@@ -1,10 +1,12 @@
-import { agentDisplayName, fmtUsdc } from "@/lib/format";
+import { AgentBadge } from "@/components/AgentBadge";
+import { fmtUsdc } from "@/lib/format";
 import type { Claim, Payout } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Props = {
   payouts: Payout[];
   claims?: Claim[];
+  explorerBaseUrl?: string;
 };
 
 const OUTCOME_CONFIG = {
@@ -13,7 +15,7 @@ const OUTCOME_CONFIG = {
   withheld: { label: "Withheld", classes: "bg-red-900/40 text-red-300 border-red-800/50" },
 } as const;
 
-export function SettlementCards({ payouts, claims = [] }: Props) {
+export function SettlementCards({ payouts, claims = [], explorerBaseUrl = "" }: Props) {
   if (!payouts.length) {
     return <p className="text-sm text-zinc-400">No settlement data available.</p>;
   }
@@ -27,7 +29,7 @@ export function SettlementCards({ payouts, claims = [] }: Props) {
 
         return (
           <div key={payout.provider_agent_id} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 shadow-lg shadow-black/20 backdrop-blur-xl">
-            <p className="text-sm text-zinc-400">{agentDisplayName(payout.provider_agent_id)}</p>
+            <AgentBadge agentId={payout.provider_agent_id} className="text-sm text-zinc-400" />
             <p className="mt-2 font-mono text-2xl text-zinc-100">{fmtUsdc(payout.paid_usdc, 6, 6)} USDC paid</p>
             <p className="mt-1 text-xs text-zinc-400">of {fmtUsdc(payout.allocated_usdc)} allocated</p>
             <span className={cn("mt-3 inline-flex rounded-full border px-2 py-1 text-xs", config.classes)}>{config.label}</span>
@@ -35,6 +37,16 @@ export function SettlementCards({ payouts, claims = [] }: Props) {
               {payout.matches} match / {payout.mismatches} mismatch / {payout.unverifiable} unverifiable
             </p>
             {allSimulated ? <p className="mt-2 text-xs text-zinc-500">Note: some claims used simulated data</p> : null}
+            {explorerBaseUrl && payout.settlement_tx_hash ? (
+              <a
+                href={`${explorerBaseUrl}/tx/${payout.settlement_tx_hash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-3 block font-mono text-[11px] text-[#5eead4] underline decoration-dotted underline-offset-2 hover:no-underline"
+              >
+                View settlement tx ↗
+              </a>
+            ) : null}
           </div>
         );
       })}

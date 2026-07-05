@@ -2,6 +2,7 @@ import { BACKEND_TIMEOUT_MS } from "@/lib/constants";
 import type {
   BackendConfig,
   Claim,
+  JobLogEntry,
   JobRequest,
   JobResponse,
   Payout,
@@ -54,6 +55,8 @@ function normalizePayout(payout: Partial<Payout>): Payout {
     paid_usdc: payout.paid_usdc ?? 0,
     fraction_paid: payout.fraction_paid ?? 0,
     outcome: (payout.outcome || "withheld") as Payout["outcome"],
+    nanopayment_tx_hash: payout.nanopayment_tx_hash ?? null,
+    settlement_tx_hash: payout.settlement_tx_hash ?? null,
   };
 }
 
@@ -81,6 +84,9 @@ function normalizeJob(raw: unknown): JobResponse {
     total_paid_usdc: Number(data.total_paid_usdc || 0),
     claims,
     payouts,
+    lock_tx_hash: (data.lock_tx_hash as string) ?? null,
+    finalize_tx_hash: (data.finalize_tx_hash as string) ?? null,
+    refund_tx_hash: (data.refund_tx_hash as string) ?? null,
   };
 }
 
@@ -163,6 +169,21 @@ export async function getJob(job_id: string): Promise<JobResponse> {
   return normalizeJob(data);
 }
 
+/** Every job this orchestrator has ever processed (JSON-file backed,
+ * server-side) -- unlike JobHistoryList's localStorage list, this isn't
+ * limited to jobs submitted from the current browser. */
+export async function getJobs(): Promise<JobResponse[]> {
+  const res = await fetch(`${BASE}/jobs`, {
+    signal: withTimeoutSignal(30000),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Jobs fetch failed (${res.status}): ${err}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data) ? data.map(normalizeJob) : [];
+}
+
 export async function getReputation(): Promise<ReputationResponse> {
   const res = await fetch(`${BASE}/reputation`, {
     signal: withTimeoutSignal(30000),
@@ -184,6 +205,25 @@ export async function getWallets(): Promise<Record<string, number>> {
     throw new Error(`Wallets fetch failed (${res.status}): ${err}`);
   }
   return res.json();
+}
+
+/**
+ * Polled while a job is in flight (POST /jobs is one long synchronous call
+ * server-side; this is the only way to see activity before it resolves).
+ * The job_id is already known client-side before submission (see
+ * lib/wallet.ts's generateJobId()), so polling can start immediately.
+ * Fails soft (empty array) instead of throwing -- a missed poll tick
+ * shouldn't interrupt the actual job or surface as a user-facing error.
+ */
+export async function getJobLogs(job_id: string): Promise<JobLogEntry[]> {
+  try {
+    const res = await fetch(`${BASE}/jobs/${job_id}/logs`, { signal: withTimeoutSignal(10000) });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.logs) ? (data.logs as JobLogEntry[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function getConfig(): Promise<BackendConfig> {
