@@ -147,14 +147,23 @@ export async function requirePayment(
   return { ok: true, proof: { payerAddress, txHash } };
 }
 
+export interface X402PostResult {
+  response: Response;
+  /** The real nanopayment tx hash, if a 402 challenge required one -- null
+   * if the endpoint didn't actually need payment (shouldn't normally
+   * happen for this project's priced specialist endpoints, but callers
+   * that want to log/display the payment shouldn't assume it's always set). */
+  txHash: string | null;
+}
+
 /** Client-side x402 flow: try unpaid, pay for real on 402, retry with proof. */
-export async function x402Post(url: string, payerPrivateKey: string, jsonBody: unknown): Promise<Response> {
+export async function x402Post(url: string, payerPrivateKey: string, jsonBody: unknown): Promise<X402PostResult> {
   const resp = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(jsonBody),
   });
-  if (resp.status !== 402) return resp;
+  if (resp.status !== 402) return { response: resp, txHash: null };
 
   const paymentRequired = PaymentRequiredSchema.parse(await resp.json());
   const requirements = paymentRequired.accepts[0];
@@ -172,9 +181,10 @@ export async function x402Post(url: string, payerPrivateKey: string, jsonBody: u
   };
   const proofHeader = encodeProof(payment);
 
-  return fetch(url, {
+  const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", [PAYMENT_HEADER]: proofHeader },
     body: JSON.stringify(jsonBody),
   });
+  return { response, txHash: tx.txHash };
 }

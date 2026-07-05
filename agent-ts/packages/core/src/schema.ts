@@ -99,6 +99,10 @@ export const ProviderPayoutSchema = z.object({
   paid_usdc: z.number(),
   fraction_paid: z.number(),
   outcome: z.enum(["full", "partial", "withheld"]),
+  // Real on-chain tx hashes, surfaced so the frontend can link straight to
+  // Arc's explorer instead of just asserting "this was paid".
+  nanopayment_tx_hash: z.string().nullable().optional(), // the flat per-response fee (x402), paid regardless of verification outcome
+  settlement_tx_hash: z.string().nullable().optional(), // the conditional release() call, present only if paid_usdc > 0
 });
 export type ProviderPayout = z.infer<typeof ProviderPayoutSchema>;
 
@@ -118,6 +122,13 @@ export const JobRecordSchema = z.object({
   total_paid_usdc: z.number().default(0),
   claims: z.array(ClaimSchema).default([]),
   payouts: z.array(ProviderPayoutSchema).default([]),
+  // Real on-chain tx hashes for the job-level (not per-specialist) escrow
+  // calls. lock_tx_hash is either the requester's own wallet-signed lock
+  // (mirrors JobRequest.payment_tx_hash) or the one the orchestrator
+  // performed itself (CLI / no-wallet-connected path).
+  lock_tx_hash: z.string().nullable().optional(),
+  finalize_tx_hash: z.string().nullable().optional(),
+  refund_tx_hash: z.string().nullable().optional(),
 });
 export type JobRecord = z.infer<typeof JobRecordSchema>;
 

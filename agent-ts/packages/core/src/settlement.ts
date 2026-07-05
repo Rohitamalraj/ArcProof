@@ -109,7 +109,22 @@ export function computeProviderPayout(providerAgentId: string, providerClaims: C
   };
 }
 
-export async function settle(job: JobRecord): Promise<JobRecord> {
+export interface SettlementEvent {
+  type: "release" | "finalize";
+  providerId?: string;
+  message: string;
+  txHash?: string;
+  explorerUrl?: string;
+}
+export type SettlementEventHandler = (event: SettlementEvent) => void;
+
+/**
+ * onEvent is optional so settle() has no hard dependency on how (or
+ * whether) a caller surfaces live progress -- the services layer's
+ * orchestrator.ts passes a handler that forwards into its per-job log
+ * store; the CLI demo runner and the SDK's runTrustedJob() just omit it.
+ */
+export async function settle(job: JobRecord, onEvent?: SettlementEventHandler): Promise<JobRecord> {
   console.log(`[settlement] job ${job.job_id}: computing verdict over ${job.claims.length} claims`);
 
   job.overall_verdict = computeJobVerdict(job.claims);
@@ -131,8 +146,16 @@ export async function settle(job: JobRecord): Promise<JobRecord> {
     payouts.push(payout);
 
     if (payout.paid_usdc > 0) {
-      await escrowContract.release(job.job_id, providerId as Role, payout.paid_usdc, payout.outcome);
+      const releaseTx = await escrowContract.release(job.job_id, providerId as Role, payout.paid_usdc, payout.outcome);
+      payout.settlement_tx_hash = releaseTx.txHash;
       totalPaid += payout.paid_usdc;
+      onEvent?.({
+        type: "release",
+        providerId,
+        message: `Released ${payout.paid_usdc.toFixed(4)} USDC to ${providerId} (${payout.outcome})`,
+        txHash: releaseTx.txHash,
+        explorerUrl: releaseTx.explorerUrl,
+      });
     }
 
     await reputationStore.recordJob(providerId, payout.matches, payout.mismatches, payout.unverifiable);
@@ -142,7 +165,9 @@ export async function settle(job: JobRecord): Promise<JobRecord> {
     );
   }
 
-  await escrowContract.finalize(job.job_id);
+  const finalizeTx = await escrowContract.finalize(job.job_id);
+  job.finalize_tx_hash = finalizeTx.txHash;
+  onEvent?.({ type: "finalize", message: `Job finalized on-chain -- any withheld balance stays in escrow`, txHash: finalizeTx.txHash, explorerUrl: finalizeTx.explorerUrl });
 
   job.payouts = payouts;
   job.total_paid_usdc = Math.round(totalPaid * 1e6) / 1e6;

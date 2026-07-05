@@ -142,16 +142,38 @@ async function verifyGovernanceEvent(claim: Claim, ctx: EvaluationContext): Prom
     const { proposals, source } = await governance.fetchRecentClosedProposals(ctx.protocolSlug, 1);
     if (!proposals.length) return { status: "unverifiable", note: "no closed proposals found on Snapshot" };
     const p = proposals[0];
-    const claimedLower = claim.claim_value.toLowerCase();
-    const matches =
-      (p.winningChoice && claimedLower.includes(p.winningChoice.toLowerCase())) ||
-      claimedLower.includes(p.title.toLowerCase()) ||
-      p.title.toLowerCase().includes(claimedLower);
+    const claimedValue = claim.claim_value.trim();
+    const claimedLower = claimedValue.toLowerCase();
+    const note = `most recent closed proposal: '${p.title}' (winner: ${p.winningChoice ?? "n/a"}, ended ${p.endDate})`;
+
+    // The specialist reports this as several independent atomic claims
+    // (proposal title, end date, winning choice) rather than one combined
+    // description -- each shape needs checking on its own terms. The old
+    // single "does this text relate to the proposal" substring test both
+    // missed true date claims (a bare "2026-06-22" never contains the
+    // title/winner text -> wrongly flagged a true claim as a mismatch) and
+    // let a *fabricated* winner slip through as a false match (a substring
+    // check means "FABRICATED-For" still contains the real winner "For").
+
+    const dateMatch = claimedValue.match(/\d{4}-\d{2}-\d{2}/);
+    if (dateMatch) {
+      return { status: dateMatch[0] === p.endDate ? "match" : "mismatch", value: p.endDate, source, note };
+    }
+
+    // A claim value much shorter than the proposal's own title is trying
+    // to state the winning choice on its own (e.g. "For"), not restate the
+    // title -- require it to equal the real choice exactly rather than
+    // merely contain it, or a fabricated "FABRICATED-For" would pass.
+    if (p.winningChoice && claimedValue.length <= p.title.length / 2) {
+      return { status: claimedLower === p.winningChoice.toLowerCase() ? "match" : "mismatch", value: p.winningChoice, source, note };
+    }
+
+    const matches = claimedLower.includes(p.title.toLowerCase()) || p.title.toLowerCase().includes(claimedLower);
     return {
       status: matches ? "match" : "mismatch",
       value: `${p.title} -> ${p.winningChoice ?? "(no winner)"}`,
       source,
-      note: `most recent closed proposal: '${p.title}' (winner: ${p.winningChoice ?? "n/a"}, ended ${p.endDate})`,
+      note,
     };
   } catch (e) {
     return { status: "unverifiable", note: `Snapshot lookup failed: ${e}` };

@@ -48,7 +48,12 @@ app.post("/analyze", async (request, reply) => {
       "one. Keep every other claim accurate.";
   }
 
-  const claims = await runSpecialistAnalysis(AGENT_ID, ONCHAIN_TOOLS, SYSTEM_PROMPT, userMsg, jobId);
+  const claims = await runSpecialistAnalysis(AGENT_ID, ONCHAIN_TOOLS, SYSTEM_PROMPT, userMsg, jobId, [
+    "tvl",
+    "price_change",
+    "wallet_flow",
+    "token_concentration",
+  ]);
   return { provider_agent_id: AGENT_ID, job_id: jobId, claims };
 });
 

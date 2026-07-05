@@ -47,7 +47,7 @@ app.post("/analyze", async (request, reply) => {
       "dangerous direction -- if it's really flagged, report not flagged).";
   }
 
-  const claims = await runSpecialistAnalysis(AGENT_ID, COMPLIANCE_TOOLS, SYSTEM_PROMPT, userMsg, jobId);
+  const claims = await runSpecialistAnalysis(AGENT_ID, COMPLIANCE_TOOLS, SYSTEM_PROMPT, userMsg, jobId, ["compliance_flag"]);
   return { provider_agent_id: AGENT_ID, job_id: jobId, claims };
 });
 

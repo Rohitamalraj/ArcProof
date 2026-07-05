@@ -8,7 +8,8 @@
  * Run standalone with:
  *   npm run orchestrator --workspace=@arcproof/services
  * This is also the one HTTP surface a frontend integrates against: POST
- * /jobs to submit work, GET /jobs/:id to poll status, GET /reputation for
+ * /jobs to submit work, GET /jobs/:id to poll status, GET /jobs/:id/logs
+ * for live activity while a job is still processing, GET /reputation for
  * the dashboard feed.
  */
 import Fastify from "fastify";
@@ -28,6 +29,7 @@ import {
 } from "@arcproof/core";
 import { planSpecialists, writeMemo } from "./langchainPlanner.js";
 import { registerSecurity, checkApiKey } from "./security.js";
+import { startJobLog, logEvent, getJobLog } from "./jobLog.js";
 
 const app = Fastify({ logger: false });
 await registerSecurity(app, { cors: true });
@@ -40,18 +42,40 @@ const SPECIALIST_URLS: Record<string, string> = {
 
 const ORCHESTRATOR_PRIVATE_KEY = config.WALLETS.orchestrator.privateKey;
 
-async function callSpecialist(name: string, jobReq: { protocol_slug: string; target_address?: string | null; inject_fault?: string | null }, jobId: string): Promise<Claim[]> {
+function explorerTxUrl(txHash: string): string {
+  return `${config.ARC_EXPLORER_URL}/tx/${txHash}`;
+}
+
+interface SpecialistCallResult {
+  claims: Claim[];
+  nanopaymentTxHash: string | null;
+}
+
+async function callSpecialist(
+  name: string,
+  jobReq: { protocol_slug: string; target_address?: string | null; inject_fault?: string | null },
+  jobId: string
+): Promise<SpecialistCallResult> {
   const url = SPECIALIST_URLS[name];
   console.log(`[orchestrator] -> calling ${name} (${url}/analyze)`);
-  const resp = await x402.x402Post(`${url}/analyze`, ORCHESTRATOR_PRIVATE_KEY, {
+  const { response, txHash } = await x402.x402Post(`${url}/analyze`, ORCHESTRATOR_PRIVATE_KEY, {
     job_id: jobId,
     protocol_slug: jobReq.protocol_slug,
     target_address: jobReq.target_address,
     inject_fault: jobReq.inject_fault,
   });
-  if (!resp.ok) throw new Error(`specialist ${name} returned ${resp.status}: ${await resp.text()}`);
-  const body = (await resp.json()) as { claims: Claim[] };
-  return body.claims;
+  if (!response.ok) throw new Error(`specialist ${name} returned ${response.status}: ${await response.text()}`);
+  if (txHash) {
+    logEvent(
+      jobId,
+      "info",
+      `Paid ${name} a nanopayment for responding (${config.NANOPAYMENT_USDC} USDC)`,
+      { txHash, explorerUrl: explorerTxUrl(txHash) },
+      { from: "orchestrator", to: name, kind: "payment" }
+    );
+  }
+  const body = (await response.json()) as { claims: Claim[] };
+  return { claims: body.claims, nanopaymentTxHash: txHash };
 }
 
 app.post("/jobs", async (request, reply) => {
@@ -61,8 +85,10 @@ app.post("/jobs", async (request, reply) => {
   // itself supplies the same job_id it locked under; otherwise generate a
   // fresh one and lock it ourselves (the CLI / no-wallet-connected path).
   const jobId = jobReq.job_id || `job_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
+  startJobLog(jobId);
   console.log(`\n=== NEW JOB ${jobId} -- ${jobReq.protocol_slug} ===`);
   console.log(`[orchestrator] received request: "${jobReq.request_text}" | budget=${jobReq.budget_usdc} USDC | template=${jobReq.template}`);
+  logEvent(jobId, "info", `Job received: "${jobReq.request_text}"`, undefined, { from: "requester", to: "orchestrator", kind: "system" });
 
   const job: JobRecord = {
     job_id: jobId,
@@ -90,6 +116,7 @@ app.post("/jobs", async (request, reply) => {
     } catch (e) {
       job.status = "failed";
       await store.jobStore.save(job);
+      logEvent(jobId, "error", `Could not read escrow contract state: ${e}`);
       return reply.code(402).send({ detail: `could not read escrow contract state for job ${jobId}: ${e}` });
     }
     const requesterMatches = onChain.requester.toLowerCase() === jobReq.requester_wallet.toLowerCase();
@@ -97,40 +124,79 @@ app.post("/jobs", async (request, reply) => {
     if (onChain.status !== "locked" || !requesterMatches || !lockedEnough) {
       job.status = "failed";
       await store.jobStore.save(job);
+      logEvent(jobId, "error", `Budget lock could not be independently verified on-chain`);
       return reply.code(402).send({
         detail: `job ${jobId} is not verifiably locked on-chain for ${jobReq.budget_usdc} USDC from ${jobReq.requester_wallet} (contract says: status=${onChain.status}, requester=${onChain.requester}, locked=${onChain.lockedUsdc})`,
       });
     }
+    job.lock_tx_hash = jobReq.payment_tx_hash;
     console.log(`[orchestrator] budget verified on-chain: ${jobReq.requester_wallet.slice(0, 10)}.. locked ${onChain.lockedUsdc.toFixed(6)} USDC (tx ${jobReq.payment_tx_hash})`);
+    logEvent(
+      jobId,
+      "success",
+      `Budget lock independently verified on-chain (${onChain.lockedUsdc.toFixed(4)} USDC)`,
+      { txHash: jobReq.payment_tx_hash, explorerUrl: explorerTxUrl(jobReq.payment_tx_hash) },
+      { from: "requester", to: "escrow", kind: "payment" }
+    );
   } else {
     try {
-      await escrowContract.lock(jobId, jobReq.requester_wallet as config.Role, jobReq.budget_usdc);
+      const lockTx = await escrowContract.lock(jobId, jobReq.requester_wallet as config.Role, jobReq.budget_usdc);
+      job.lock_tx_hash = lockTx.txHash;
+      logEvent(
+        jobId,
+        "success",
+        `Locked ${jobReq.budget_usdc} USDC in escrow`,
+        { txHash: lockTx.txHash, explorerUrl: lockTx.explorerUrl },
+        { from: "requester", to: "escrow", kind: "payment" }
+      );
     } catch (e) {
       job.status = "failed";
       await store.jobStore.save(job);
+      logEvent(jobId, "error", `Could not lock budget in escrow contract: ${e}`);
       return reply.code(402).send({ detail: `could not lock budget in escrow contract: ${e}` });
     }
   }
 
   try {
+    logEvent(jobId, "info", `Orchestrator's LLM planner is choosing which specialists to engage...`);
     const plan = await planSpecialists(jobReq);
     job.subtasks = plan.specialist_ids;
     if (!jobReq.template) job.template = plan.template_label;
+    logEvent(jobId, "info", `Plan: ${plan.specialist_ids.join(", ")} -- ${plan.reasoning}`);
 
     const allClaims: Claim[] = [];
+    const nanopaymentTxByProvider: Record<string, string> = {};
     for (const name of plan.specialist_ids) {
+      logEvent(jobId, "info", `Calling ${name}...`, undefined, { from: "orchestrator", to: name, kind: "call" });
       try {
-        const claims = await callSpecialist(name, jobReq, jobId);
+        const { claims, nanopaymentTxHash } = await callSpecialist(name, jobReq, jobId);
         allClaims.push(...claims);
+        if (nanopaymentTxHash) nanopaymentTxByProvider[name] = nanopaymentTxHash;
+        logEvent(
+          jobId,
+          "success",
+          `${name} responded with ${claims.length} claim${claims.length === 1 ? "" : "s"}`,
+          undefined,
+          { from: name, to: "orchestrator", kind: "response" }
+        );
       } catch (e) {
         console.log(`[orchestrator]   ! ${name} failed: ${e}`);
+        logEvent(jobId, "warn", `${name} failed to respond: ${e}`, undefined, { from: name, to: "orchestrator", kind: "response" });
       }
     }
 
     job.claims = allClaims;
+    logEvent(jobId, "info", `Writing the diligence memo...`);
     job.final_memo = await writeMemo(jobReq, allClaims);
 
     console.log(`[orchestrator] assembled ${allClaims.length} claims from ${plan.specialist_ids.length} specialists -> handing off to evaluator`);
+    logEvent(
+      jobId,
+      "info",
+      `Assembled ${allClaims.length} claim${allClaims.length === 1 ? "" : "s"} -- handing off to the evaluator for independent verification`,
+      undefined,
+      { from: "orchestrator", to: "evaluator-v1", kind: "call" }
+    );
     const evalResp = await fetch(`${config.EVALUATOR_URL}/evaluate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -145,6 +211,18 @@ app.post("/jobs", async (request, reply) => {
     const evalBody = (await evalResp.json()) as { claims: Claim[] };
     job.claims = evalBody.claims;
 
+    for (const c of job.claims) {
+      const level = c.verification_status === "match" ? "success" : c.verification_status === "mismatch" ? "error" : "warn";
+      const icon = c.verification_status === "match" ? "MATCH" : c.verification_status === "mismatch" ? "MISMATCH" : "UNVERIFIABLE";
+      logEvent(
+        jobId,
+        level,
+        `[${c.claim_type}] ${icon} -- ${c.claim_text}${c.verification_note ? ` (${c.verification_note})` : ""}`,
+        undefined,
+        { from: "evaluator-v1", to: c.provider_agent_id, kind: "verdict" }
+      );
+    }
+
     if (!settlement.hasCheckableClaims(job.claims)) {
       // Every specialist failed, or every claim came back unverifiable --
       // computeJobVerdict would call this a clean "accept" (0 mismatches),
@@ -154,10 +232,26 @@ app.post("/jobs", async (request, reply) => {
       throw new Error(`no checkable claims for job ${jobId} (every specialist failed or all claims were unverifiable) -- refunding rather than auto-accepting`);
     }
 
-    const settled = await settlement.settle(job);
+    logEvent(jobId, "info", `Settling per-specialist payouts on-chain...`);
+    const settled = await settlement.settle(job, (event) => {
+      const actors =
+        event.type === "release"
+          ? { from: "escrow", to: event.providerId, kind: "settlement" as const }
+          : { from: "orchestrator", to: "escrow", kind: "system" as const };
+      logEvent(jobId, "success", event.message, { txHash: event.txHash, explorerUrl: event.explorerUrl }, actors);
+    });
+
+    // Fold each specialist's earlier nanopayment tx hash into its final
+    // payout record now that settle() has produced the payouts array.
+    for (const payout of settled.payouts) {
+      const tx = nanopaymentTxByProvider[payout.provider_agent_id];
+      if (tx) payout.nanopayment_tx_hash = tx;
+    }
+
     await store.jobStore.save(settled);
 
     console.log(`[orchestrator] job ${jobId} DONE -- verdict=${settled.overall_verdict?.toUpperCase()} paid=${settled.total_paid_usdc.toFixed(4)} USDC`);
+    logEvent(jobId, "success", `Job complete -- verdict ${settled.overall_verdict?.toUpperCase()}, ${settled.total_paid_usdc.toFixed(4)} USDC paid`);
     return settled;
   } catch (e) {
     // Budget is already locked in the escrow contract at this point -- any
@@ -165,11 +259,21 @@ app.post("/jobs", async (request, reply) => {
     // job record and no way back to the requester. refund() is a real
     // contract call, same trust model as any release.
     console.log(`[orchestrator] job ${jobId} failed after budget lock: ${e} -- refunding escrow contract -> requester`);
+    logEvent(jobId, "warn", `Job failed after budget lock: ${e} -- refunding escrow contract`);
     job.status = "failed";
     try {
-      await escrowContract.refund(jobId);
+      const refundTx = await escrowContract.refund(jobId);
+      job.refund_tx_hash = refundTx.txHash;
+      logEvent(
+        jobId,
+        "success",
+        `Refunded full locked budget back to the requester`,
+        { txHash: refundTx.txHash, explorerUrl: refundTx.explorerUrl },
+        { from: "escrow", to: "requester", kind: "payment" }
+      );
     } catch (refundError) {
       console.log(`[orchestrator]   ! refund ALSO failed: ${refundError} -- funds remain locked in contract, job marked failed`);
+      logEvent(jobId, "error", `Refund ALSO failed: ${refundError} -- funds remain locked in the contract`);
     }
     await store.jobStore.save(job);
     return reply.code(500).send({ detail: `job failed after budget was locked; escrow contract refunded to requester where possible: ${e}` });
@@ -181,6 +285,11 @@ app.get("/jobs/:jobId", async (request, reply) => {
   const job = store.jobStore.get(jobId);
   if (!job) return reply.code(404).send({ detail: "job not found" });
   return job;
+});
+
+app.get("/jobs/:jobId/logs", async (request) => {
+  const { jobId } = request.params as { jobId: string };
+  return { logs: getJobLog(jobId) };
 });
 
 app.get("/jobs", async () => store.jobStore.listAll());

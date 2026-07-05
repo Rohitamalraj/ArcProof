@@ -14,6 +14,17 @@
 import { z } from "zod";
 import { ClaimTypeSchema } from "@arcproof/core";
 
+// Tried narrowing this enum per-specialist (z.enum(...).extract(...)) to
+// stop a specialist's LLM from emitting an out-of-scope claim_type (see
+// runAnalysis.ts's post-hoc filter for the actual fix and the full story).
+// Reverted: Groq's tool-calling translator handles the full 7-value enum
+// reliably (every successful run in this project used it), but a narrowed
+// 2-value enum made it try to call a nonexistent tool literally named
+// after the claim type instead of using its normal structured-output
+// format ("attempted to call tool 'governance_event' which was not in
+// request.tools") -- a new failure traded for the one being fixed. Keeping
+// the LLM-facing schema exactly as proven, and filtering after the fact
+// instead, avoids relying on Groq's enum-size-dependent behavior at all.
 export const ClaimDraftSchema = z.object({
   claim_type: ClaimTypeSchema,
   claim_text: z.string().describe("Human-readable statement of the claim, citing the number/fact"),

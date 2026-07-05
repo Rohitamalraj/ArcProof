@@ -47,7 +47,7 @@ app.post("/analyze", async (request, reply) => {
       "every other claim accurate.";
   }
 
-  const claims = await runSpecialistAnalysis(AGENT_ID, NEWS_TOOLS, SYSTEM_PROMPT, userMsg, jobId);
+  const claims = await runSpecialistAnalysis(AGENT_ID, NEWS_TOOLS, SYSTEM_PROMPT, userMsg, jobId, ["governance_event", "news_incident"]);
   return { provider_agent_id: AGENT_ID, job_id: jobId, claims };
 });
 

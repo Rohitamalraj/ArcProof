@@ -13,7 +13,14 @@
 import { createHash } from "node:crypto";
 import { ETHERSCAN_API_KEY } from "../config.js";
 
-const ETHERSCAN_TXLIST_URL = "https://api.etherscan.io/api";
+// Etherscan retired the unversioned v1 API (api.etherscan.io/api) --
+// requests to it now return HTTP 200 with {status:"0", message:"NOTOK",
+// result:"...deprecated V1 endpoint..."} instead of real data, so a plain
+// `!resp.ok` check doesn't catch it. v2 requires an explicit chainid
+// (1 = Ethereum mainnet, where these protocols' real treasury wallets
+// actually live -- unrelated to Arc, which is only where payment settles).
+const ETHERSCAN_V2_URL = "https://api.etherscan.io/v2/api";
+const ETHERSCAN_CHAIN_ID = "1";
 
 // Publicly known exchange hot wallets, used only to demonstrate a real
 // wallet_flow "did this address touch a labeled exchange wallet" check.
@@ -45,21 +52,28 @@ export interface WalletFlowResult {
 export async function checkWalletFlow(address: string, exchangeHint = "binance"): Promise<WalletFlowResult> {
   if (ETHERSCAN_API_KEY) {
     const params = new URLSearchParams({
+      chainid: ETHERSCAN_CHAIN_ID,
       module: "account",
       action: "txlist",
       address,
       sort: "desc",
       apikey: ETHERSCAN_API_KEY,
     });
-    const resp = await fetch(`${ETHERSCAN_TXLIST_URL}?${params.toString()}`);
+    const resp = await fetch(`${ETHERSCAN_V2_URL}?${params.toString()}`);
     if (!resp.ok) throw new Error(`Etherscan request failed: ${resp.status}`);
-    const data = (await resp.json()) as { result?: { from?: string; to?: string }[] };
-    const txs = data.result || [];
+    const data = (await resp.json()) as { status: string; message: string; result?: { from?: string; to?: string }[] | string };
+    // Etherscan returns HTTP 200 even on API-level failures (bad key, rate
+    // limit, deprecated endpoint) -- status "1" is the only real success
+    // signal, `result` is an error string (not an array) otherwise.
+    if (data.status !== "1" || !Array.isArray(data.result)) {
+      throw new Error(`Etherscan API error: ${data.message} -- ${JSON.stringify(data.result)}`);
+    }
+    const txs = data.result;
     const target = KNOWN_EXCHANGE_WALLETS[exchangeHint] || "";
     const touchedExchange = txs.some(
       (tx) => target && ((tx.from || "").toLowerCase() === target || (tx.to || "").toLowerCase() === target)
     );
-    return { touchedExchange, source: `${ETHERSCAN_TXLIST_URL}?address=${address}`, simulated: false };
+    return { touchedExchange, source: `${ETHERSCAN_V2_URL}?chainid=${ETHERSCAN_CHAIN_ID}&address=${address}`, simulated: false };
   }
 
   // SIMULATED fallback: deterministic so repeated demo runs are stable.
