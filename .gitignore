@@ -38,3 +38,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# archived Python reference implementation -- superseded by agent-ts,
+# see STATUS.md. Kept locally, no longer tracked in git.
+/agent
